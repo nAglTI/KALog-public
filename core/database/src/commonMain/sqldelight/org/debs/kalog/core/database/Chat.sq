@@ -1,0 +1,108 @@
+CREATE TABLE chat_threads (
+    id TEXT NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    subtitle TEXT NOT NULL,
+    avatar_initials TEXT NOT NULL,
+    avatar_accent TEXT NOT NULL,
+    unread_count INTEGER NOT NULL,
+    chat_type TEXT NOT NULL
+);
+
+CREATE TABLE chat_messages (
+    id TEXT NOT NULL PRIMARY KEY,
+    chat_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+    sender TEXT,
+    body TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    is_service INTEGER NOT NULL,
+    is_mine INTEGER,
+    delivery_status TEXT,
+    position INTEGER NOT NULL,
+    message_type TEXT NOT NULL,
+    from_user_id TEXT,
+    to_user_id TEXT
+);
+
+selectThreadCount:
+SELECT COUNT(*)
+FROM chat_threads;
+
+selectAllThreads:
+SELECT *
+FROM chat_threads;
+
+selectMessagesByChat:
+SELECT *
+FROM chat_messages
+WHERE chat_id = ?
+ORDER BY position ASC;
+
+selectNextMessagePosition:
+SELECT COALESCE(MAX(position), 0)
+FROM chat_messages;
+
+selectMessageCountByChat:
+SELECT COUNT(*)
+FROM chat_messages
+WHERE chat_id = ?;
+
+selectMinMessagePositionByChat:
+SELECT COALESCE(MIN(position), 0)
+FROM chat_messages
+WHERE chat_id = ?;
+
+selectMaxMessagePositionByChat:
+SELECT COALESCE(MAX(position), 0)
+FROM chat_messages
+WHERE chat_id = ?;
+
+selectMessageById:
+SELECT *
+FROM chat_messages
+WHERE id = ?;
+
+insertThread:
+INSERT OR REPLACE INTO chat_threads(
+    id,
+    title,
+    subtitle,
+    avatar_initials,
+    avatar_accent,
+    unread_count,
+    chat_type
+) VALUES (?, ?, ?, ?, ?, ?, ?);
+
+insertMessage:
+INSERT OR REPLACE INTO chat_messages(
+    id,
+    chat_id,
+    sender,
+    body,
+    timestamp,
+    is_service,
+    is_mine,
+    delivery_status,
+    position,
+    message_type,
+    from_user_id,
+    to_user_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+markChatOpened:
+UPDATE chat_threads
+SET unread_count = 0
+WHERE id = ?;
+
+deleteAllMessages:
+DELETE FROM chat_messages;
+
+deleteAllThreads:
+DELETE FROM chat_threads;
+
+deleteMessagesByChat:
+DELETE FROM chat_messages
+WHERE chat_id = ?;
+
+deleteThreadById:
+DELETE FROM chat_threads
+WHERE id = ?;

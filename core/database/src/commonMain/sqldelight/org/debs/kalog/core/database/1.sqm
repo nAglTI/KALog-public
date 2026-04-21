@@ -1,0 +1,6 @@
+ALTER TABLE chat_threads ADD COLUMN chat_type TEXT NOT NULL DEFAULT 'personal';
+ALTER TABLE chat_messages ADD COLUMN message_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_messages ADD COLUMN from_user_id TEXT;
+ALTER TABLE chat_messages ADD COLUMN to_user_id TEXT;
+DELETE FROM chat_messages;
+DELETE FROM chat_threads;
