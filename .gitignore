@@ -5,7 +5,7 @@
 xcuserdata
 !src/**/build/
 local.properties
-core/network/src/commonMain/kotlin/org/debs/kalog/core/network/
+core/network/src/commonMain/kotlin/org/debs/kalog/core/network/config/NetworkConfig.kt
 .idea
 .DS_Store
 captures

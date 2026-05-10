@@ -8,6 +8,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.crypto.GeneratedKeyPair
+import org.debs.kalog.core.crypto.GeneratedAttachmentKey
+import org.debs.kalog.feature.chat.data.crypto.AttachmentEncryptionKey
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
 import org.debs.kalog.feature.chat.data.crypto.ChatParticipantKey
@@ -16,6 +18,9 @@ import org.debs.kalog.feature.chat.data.local.LocalChatMessage
 import org.debs.kalog.feature.chat.data.local.LocalChatThread
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.data.remote.*
+import org.debs.kalog.feature.chat.domain.model.ChatAttachment
+import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
+import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -1160,6 +1165,198 @@ class OfflineFirstChatRepositoryJvmTest {
     }
 
     @Test
+    fun sendMessage_failsClosedWhenRecipientEncryptionFails() = runBlocking {
+        val chatId = "chat-1"
+        val keyStore = FakeChatKeyStore()
+        val encryptionService = FakeEncryptionService(
+            generatedKeyPair = GeneratedKeyPair(
+                publicKey = "public-key",
+                privateKey = "private-key",
+            ),
+            failingPublicKeys = setOf("public-key-2"),
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = OfflineFirstChatRepository(
+            localDataSource = FakeChatLocalDataSource(),
+            remoteDataSource = remoteDataSource,
+            chatMessageCipher = ChatMessageCipher(encryptionService, keyStore),
+            chatKeyStore = keyStore,
+            encryptionService = encryptionService,
+            chatPreferencesDataSource = FakeChatPreferencesDataSource(),
+            json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+        )
+
+        repository.openChat(chatId)
+        val result = runCatching { repository.sendMessage(chatId, "hello") }
+
+        assertTrue(result.isFailure)
+        assertEquals(0, remoteDataSource.sendCalls)
+        assertEquals(emptyList(), remoteDataSource.lastSentPayloads)
+    }
+
+    @Test
+    fun prepareAttachment_generatesAndStoresChaCha20Poly1305Key() = runBlocking {
+        val chatId = "chat-1"
+        val keyStore = FakeChatKeyStore()
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            keyStore = keyStore,
+        )
+
+        val preparedImage = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "attachment-1",
+                kind = ChatAttachmentKind.Image,
+                name = "photo.jpg",
+                mimeType = "image/jpeg",
+                sizeBytes = 128_000,
+                localUri = "content://gallery/photo.jpg",
+            ),
+        )
+        val preparedVoice = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "attachment-2",
+                kind = ChatAttachmentKind.Voice,
+                name = "voice.m4a",
+                mimeType = "audio/mp4",
+                durationMillis = 7_000,
+                localUri = "content://recorder/voice.m4a",
+            ),
+        )
+
+        val storedKey = checkNotNull(keyStore.attachmentEncryptionKey(chatId, "attachment-1"))
+        val secondStoredKey = checkNotNull(keyStore.attachmentEncryptionKey(chatId, "attachment-2"))
+        assertEquals("attachment-1", preparedImage.attachment.encryptionKeyId)
+        assertEquals("attachment-1", preparedImage.encryption.uuid)
+        assertEquals("chacha20-poly1305-key-1", preparedImage.encryption.key)
+        assertEquals("ChaCha20-Poly1305", preparedImage.encryption.algorithm)
+        assertEquals(256, preparedImage.encryption.sizeBits)
+        assertEquals("attachment-2", preparedVoice.attachment.encryptionKeyId)
+        assertEquals("attachment-2", preparedVoice.encryption.uuid)
+        assertEquals("chacha20-poly1305-key-2", preparedVoice.encryption.key)
+        assertEquals("ChaCha20-Poly1305", storedKey.algorithm)
+        assertEquals(256, storedKey.sizeBits)
+        assertEquals("chacha20-poly1305-key-1", storedKey.key)
+        assertEquals("chacha20-poly1305-key-2", secondStoredKey.key)
+
+        keyStore.clearChatState(chatId)
+
+        assertEquals(null, keyStore.attachmentEncryptionKey(chatId, "attachment-1"))
+        assertEquals(null, keyStore.attachmentEncryptionKey(chatId, "attachment-2"))
+    }
+
+    @Test
+    fun sendMessage_includesPreparedAttachmentUuidAndKeyInsideEncryptedPayload() = runBlocking {
+        val chatId = "chat-1"
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(remoteDataSource = remoteDataSource)
+        val firstAttachment = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "image-uuid",
+                kind = ChatAttachmentKind.Image,
+                name = "image.jpg",
+            ),
+        )
+        val secondAttachment = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "file-uuid",
+                kind = ChatAttachmentKind.File,
+                name = "report.pdf",
+            ),
+        )
+
+        repository.sendMessage(chatId, "hello", listOf(firstAttachment, secondAttachment))
+
+        val payloads = remoteDataSource.lastSentPayloads
+        assertEquals(setOf("user-1", "user-2"), payloads.map(RemoteSendPayload::recipientId).toSet())
+        payloads.forEach { payload ->
+            assertEquals(
+                """{"message":"hello","attachments":[{"uuid":"image-uuid","key":"chacha20-poly1305-key-1"},{"uuid":"file-uuid","key":"chacha20-poly1305-key-2"}]}""",
+                payload.chunks.single(),
+            )
+        }
+    }
+
+    @Test
     fun syncLoop_refreshesParticipantKeysAfterIncomingMessageFromParticipantWithBlankLocalKey() = runBlocking {
         val chatId = "chat-1"
         val initialTimestamp = "2026-03-21T10:00:00Z"
@@ -1324,6 +1521,481 @@ class OfflineFirstChatRepositoryJvmTest {
     }
 
     @Test
+    fun syncLoop_sendsOwnNicknameWhenUserProvidesPublicKey() = runBlocking {
+        val chatId = "chat-1"
+        val initialTimestamp = "2026-03-21T10:00:00Z"
+        val incomingTimestamp = "2026-03-21T10:05:00Z"
+        val initialChatInfo = RemoteChatInfo(
+            id = chatId,
+            title = "Group chat",
+            type = "group",
+            users = listOf(
+                RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                RemoteChatUser(userId = "user-2", publicKey = ""),
+            ),
+        )
+        val updatedChatInfo = initialChatInfo.copy(
+            users = listOf(
+                RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+            ),
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = listOf(remoteMessage(chatId, 1, createdAt = initialTimestamp)),
+                ),
+            ),
+            chatInfoById = mapOf(chatId to initialChatInfo),
+            historyByOffset = emptyMap(),
+            pollResults = listOf(
+                RemotePolledMessages(
+                    timestamp = incomingTimestamp,
+                    messages = listOf(
+                        serviceMessage(
+                            chatId = chatId,
+                            id = "2",
+                            createdAt = incomingTimestamp,
+                            eventType = "public_key_provided",
+                            payload = """
+                                {"userID":"user-2"}
+                            """.trimIndent(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val preferences = FakeChatPreferencesDataSource(initialNickname = "Daniil")
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            preferencesDataSource = preferences,
+        )
+
+        repository.openChat(chatId)
+        remoteDataSource.updateChatInfo(chatId, updatedChatInfo)
+        runCatching {
+            withTimeout(100) {
+                repository.runSyncLoop()
+            }
+        }
+
+        val sentMessage = remoteDataSource.sentServiceMessages.single()
+        assertEquals(chatId, sentMessage.first)
+        val sentPayload = sentMessage.second.single()
+        assertEquals("user-2", sentPayload.recipientId)
+        assertEquals("user_nickname_provided", sentPayload.chunks.first())
+        assertEquals(
+            """{"userID":"user-1","nickname":"Daniil"}""",
+            sentPayload.chunks.drop(1).single(),
+        )
+    }
+
+    @Test
+    fun broadcastNickname_sendsToPersonalAndGroupChatsFromEndAndStoresOwnNicknamePair() = runBlocking {
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = "chat-1",
+                    title = "Personal chat",
+                    type = "personal",
+                    seedMessages = listOf(remoteMessage("chat-1", 1, createdAt = "2026-03-21T10:00:00Z")),
+                ),
+                RemoteChatSummary(
+                    id = "chat-2",
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = listOf(remoteMessage("chat-2", 2, createdAt = "2026-03-21T10:01:00Z")),
+                ),
+            ),
+            chatInfoById = mapOf(
+                "chat-1" to RemoteChatInfo(
+                    id = "chat-1",
+                    title = "Personal chat",
+                    type = "personal",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-user-2"),
+                    ),
+                ),
+                "chat-2" to RemoteChatInfo(
+                    id = "chat-2",
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-3", publicKey = "public-key-user-3"),
+                        RemoteChatUser(userId = "user-4", publicKey = "public-key-user-4"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val preferences = FakeChatPreferencesDataSource(initialNickname = "New Nick")
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            preferencesDataSource = preferences,
+        )
+
+        repository.broadcastNicknameToAllChats()
+
+        assertEquals(
+            listOf("chat-2", "chat-1"),
+            remoteDataSource.sentServiceMessages.map { it.first },
+        )
+        assertEquals(
+            setOf("user-3", "user-4"),
+            remoteDataSource.sentServiceMessages
+                .first { it.first == "chat-2" }
+                .second
+                .map(RemoteSendPayload::recipientId)
+                .toSet(),
+        )
+        assertEquals(
+            setOf("user-2"),
+            remoteDataSource.sentServiceMessages
+                .first { it.first == "chat-1" }
+                .second
+                .map(RemoteSendPayload::recipientId)
+                .toSet(),
+        )
+        remoteDataSource.sentServiceMessages
+            .flatMap { it.second }
+            .forEach { payload ->
+                assertEquals("user_nickname_provided", payload.chunks.first())
+                assertEquals(
+                    """{"userID":"user-1","nickname":"New Nick"}""",
+                    payload.chunks.drop(1).single(),
+                )
+            }
+        assertEquals("New Nick", preferences.getUserNickname("user-1"))
+    }
+
+    @Test
+    fun syncLoop_savesNicknameAndUsesItInsteadOfUuidWherePossible() = runBlocking {
+        val chatId = "chat-1"
+        val initialTimestamp = "2026-03-21T10:00:00Z"
+        val incomingTimestamp = "2026-03-21T10:05:00Z"
+        val chatInfo = RemoteChatInfo(
+            id = chatId,
+            title = "user-2",
+            type = "personal",
+            users = listOf(
+                RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+            ),
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "user-2",
+                    type = "personal",
+                    seedMessages = listOf(
+                        remoteMessage(
+                            chatId = chatId,
+                            index = 1,
+                            createdAt = initialTimestamp,
+                            fromUserId = "user-2",
+                            toUserId = "user-1",
+                        ),
+                    ),
+                ),
+            ),
+            chatInfoById = mapOf(chatId to chatInfo),
+            historyByOffset = emptyMap(),
+            pollResults = listOf(
+                RemotePolledMessages(
+                    timestamp = incomingTimestamp,
+                    messages = listOf(
+                        serviceMessage(
+                            chatId = chatId,
+                            id = "2",
+                            createdAt = incomingTimestamp,
+                            eventType = "user_nickname_provided",
+                            payload = """
+                                {"userID":"user-2","nickname":"Alice"}
+                            """.trimIndent(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val preferences = FakeChatPreferencesDataSource()
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            preferencesDataSource = preferences,
+        )
+
+        repository.openChat(chatId)
+        runCatching {
+            withTimeout(100) {
+                repository.runSyncLoop()
+            }
+        }
+
+        val chat = requireNotNull(repository.observeChat(chatId).first())
+        val firstUserMessage = chat.messages.first { it.id == "1" } as ChatMessage.User
+        val nicknameServiceMessage = chat.messages.first { it.id == "2" } as ChatMessage.Service
+
+        assertEquals("Alice", preferences.getUserNickname("user-2"))
+        assertEquals("Alice", chat.title)
+        assertEquals("A", chat.avatar.initials)
+        assertEquals("Alice", firstUserMessage.sender)
+        assertEquals("Alice changed their nickname", nicknameServiceMessage.body)
+        assertEquals("Alice", repository.getChatParticipants(chatId).first { it.userId == "user-2" }.displayName)
+    }
+
+    @Test
+    fun loadMoreMessages_savesNicknameFromHistoricalServiceMessage() = runBlocking {
+        val chatId = "chat-1"
+        val nicknameTimestamp = "2026-03-21T10:01:00Z"
+        val messageTimestamp = "2026-03-21T10:02:00Z"
+        val previewTimestamp = "2026-03-21T10:10:00Z"
+        val chatInfo = RemoteChatInfo(
+            id = chatId,
+            title = "Group chat",
+            type = "group",
+            users = listOf(
+                RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+            ),
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = listOf(
+                        remoteMessage(
+                            chatId = chatId,
+                            index = 3,
+                            createdAt = previewTimestamp,
+                            fromUserId = "user-2",
+                            toUserId = "user-1",
+                        ),
+                    ),
+                ),
+            ),
+            chatInfoById = mapOf(chatId to chatInfo),
+            historyByOffset = mapOf(
+                1 to listOf(
+                    serviceMessage(
+                        chatId = chatId,
+                        id = "1",
+                        createdAt = nicknameTimestamp,
+                        eventType = "user_nickname_provided",
+                        payload = """
+                            {"userID":"user-2","nickname":"Alice"}
+                        """.trimIndent(),
+                    ),
+                    remoteMessage(
+                        chatId = chatId,
+                        index = 2,
+                        createdAt = messageTimestamp,
+                        fromUserId = "user-2",
+                        toUserId = "user-1",
+                    ),
+                ),
+            ),
+        )
+        val preferences = FakeChatPreferencesDataSource()
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            preferencesDataSource = preferences,
+        )
+
+        repository.openChat(chatId)
+        val loaded = repository.loadMoreMessages(chatId)
+
+        val chat = requireNotNull(repository.observeChat(chatId).first())
+        val historicalMessage = chat.messages.first { it.id == "2" } as ChatMessage.User
+        val nicknameServiceMessage = chat.messages.first { it.id == "1" } as ChatMessage.Service
+
+        assertTrue(loaded)
+        assertEquals("Alice", preferences.getUserNickname("user-2"))
+        assertEquals("Alice", historicalMessage.sender)
+        assertEquals("Alice changed their nickname", nicknameServiceMessage.body)
+        assertEquals("Alice", repository.getChatParticipants(chatId).first { it.userId == "user-2" }.displayName)
+    }
+
+    @Test
+    fun runSyncLoop_usesPersistedLastPollTimestampAfterOpeningChatWithNewerSeed() = runBlocking {
+        val chatId = "chat-1"
+        val persistedTimestamp = "2026-03-21T10:00:00Z"
+        val previewTimestamp = "2026-03-21T10:10:00Z"
+        val pollTimestamp = "2026-03-21T10:11:00Z"
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = listOf(
+                        remoteMessage(chatId, 1, createdAt = previewTimestamp),
+                    ),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+            pollResults = listOf(
+                RemotePolledMessages(
+                    timestamp = pollTimestamp,
+                    messages = emptyList(),
+                ),
+            ),
+        )
+        val preferences = FakeChatPreferencesDataSource(initialLastPollTimestamp = persistedTimestamp)
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            preferencesDataSource = preferences,
+        )
+
+        repository.openChat(chatId)
+        runCatching {
+            withTimeout(100) {
+                repository.runSyncLoop()
+            }
+        }
+
+        assertEquals(listOf(persistedTimestamp), remoteDataSource.pollSinceCalls)
+        assertEquals(pollTimestamp, repository.lastPollTimestamp)
+        assertEquals(pollTimestamp, preferences.getLastPollTimestamp())
+    }
+
+    @Test
+    fun syncLoop_reemitsOtherChatsWhenKnownNicknameChanges() = runBlocking {
+        val nicknameChatId = "chat-1"
+        val otherChatId = "chat-2"
+        val initialTimestamp = "2026-03-21T10:00:00Z"
+        val incomingTimestamp = "2026-03-21T10:05:00Z"
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = nicknameChatId,
+                    title = "Nickname source",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+                RemoteChatSummary(
+                    id = otherChatId,
+                    title = "Other group",
+                    type = "group",
+                    seedMessages = listOf(
+                        remoteMessage(
+                            chatId = otherChatId,
+                            index = 1,
+                            createdAt = initialTimestamp,
+                            fromUserId = "user-2",
+                            toUserId = "user-1",
+                        ),
+                    ),
+                ),
+            ),
+            chatInfoById = mapOf(
+                nicknameChatId to RemoteChatInfo(
+                    id = nicknameChatId,
+                    title = "Nickname source",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+                otherChatId to RemoteChatInfo(
+                    id = otherChatId,
+                    title = "Other group",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+            pollResults = listOf(
+                RemotePolledMessages(
+                    timestamp = incomingTimestamp,
+                    messages = listOf(
+                        serviceMessage(
+                            chatId = nicknameChatId,
+                            id = "2",
+                            createdAt = incomingTimestamp,
+                            eventType = "user_nickname_provided",
+                            payload = """
+                                {"userID":"user-2","nickname":"Alice"}
+                            """.trimIndent(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val repository = createRepository(remoteDataSource = remoteDataSource)
+
+        repository.startSession()
+
+        val observedNickname = CompletableDeferred<String>()
+        val observerReady = CompletableDeferred<Unit>()
+        val observer = launch {
+            repository.observeChat(otherChatId)
+                .filterNotNull()
+                .collect { chat ->
+                    if (!observerReady.isCompleted) observerReady.complete(Unit)
+                    val message = chat.messages.firstOrNull { it.id == "1" } as? ChatMessage.User
+                    if (message?.sender == "Alice") {
+                        observedNickname.complete(message.sender)
+                    }
+                }
+        }
+        withTimeout(100) { observerReady.await() }
+
+        runCatching {
+            withTimeout(100) {
+                repository.runSyncLoop()
+            }
+        }
+
+        assertEquals("Alice", withTimeout(500) { observedNickname.await() })
+        observer.cancel()
+    }
+
+    @Test
     fun syncLoop_updatesParticipantsWhenOtherUserAddedViaServiceMessage() = runBlocking {
         val chatId = "chat-1"
         val initialTimestamp = "2026-03-21T10:00:00Z"
@@ -1442,6 +2114,18 @@ private fun serviceMessage(
     )
 }
 
+private fun groupChatInfo(chatId: String, otherUserId: String): RemoteChatInfo {
+    return RemoteChatInfo(
+        id = chatId,
+        title = chatId,
+        type = "group",
+        users = listOf(
+            RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+            RemoteChatUser(userId = otherUserId, publicKey = "public-key-$otherUserId"),
+        ),
+    )
+}
+
 private fun messageTimestamp(index: Int): String {
     val hour = 8 + index / 60
     val minute = index % 60
@@ -1464,6 +2148,11 @@ private class FakeChatLocalDataSource(
                     existingMessages = existing?.messages.orEmpty(),
                     incomingMessages = thread.messages,
                 ),
+                invitationStatus = if (thread.invitationStatus == "none") {
+                    existing?.invitationStatus ?: "none"
+                } else {
+                    thread.invitationStatus
+                },
             )
         }
         threadsState.value = currentThreads.values.sortedByDescending(LocalChatThread::lastMessagePosition)
@@ -1530,6 +2219,14 @@ private class FakeChatLocalDataSource(
         updateThread(chatId) { thread -> thread.copy(unreadCount = 0) }
     }
 
+    override suspend fun updateChatTitle(chatId: String, title: String) {
+        updateThread(chatId) { thread -> thread.copy(title = title) }
+    }
+
+    override suspend fun updateInvitationStatus(chatId: String, status: String) {
+        updateThread(chatId) { thread -> thread.copy(invitationStatus = status) }
+    }
+
     override suspend fun clearAll() {
         threadsState.value = emptyList()
     }
@@ -1592,6 +2289,7 @@ private class FakeChatRemoteDataSource(
         private set
     var lastSentPayloads: List<RemoteSendPayload> = emptyList()
         private set
+    val sentServiceMessages = mutableListOf<Pair<String, List<RemoteSendPayload>>>()
     var lastCreateDirectChatPublicKey: String? = null
         private set
     var lastCreateGroupChatPublicKey: String? = null
@@ -1645,6 +2343,10 @@ private class FakeChatRemoteDataSource(
         lastSentPayloads = payloads
     }
 
+    override suspend fun sendServiceMessage(chatId: String, payloads: List<RemoteSendPayload>) {
+        sentServiceMessages += chatId to payloads
+    }
+
     fun updateChatInfo(chatId: String, chatInfo: RemoteChatInfo) {
         mutableChatInfoById[chatId] = chatInfo
     }
@@ -1687,6 +2389,8 @@ private class FakeChatRemoteDataSource(
 
     override suspend fun leaveGroupChat(chatId: String) = Unit
 
+    override suspend fun leaveChat(chatId: String) = Unit
+
     override suspend fun setGroupChatPublicKey(chatId: String, publicKey: String) {
         setGroupChatPublicKeyCalls += chatId to publicKey
         val currentChatInfo = mutableChatInfoById[chatId] ?: return
@@ -1711,6 +2415,7 @@ private class FakeChatKeyStore(
     private val participantsByChatId = mutableMapOf<String, List<ChatParticipantKey>>()
     private val chatPublicKeys = mutableMapOf<String, String>()
     private val chatPrivateKeys = mutableMapOf<String, String>()
+    private val attachmentKeys = mutableMapOf<Pair<String, String>, AttachmentEncryptionKey>()
 
     override suspend fun currentUserId(): String? = currentUserId
 
@@ -1743,6 +2448,14 @@ private class FakeChatKeyStore(
         chatPrivateKeys[chatId] = privateKey
     }
 
+    override suspend fun attachmentEncryptionKey(chatId: String, attachmentId: String): AttachmentEncryptionKey? {
+        return attachmentKeys[chatId to attachmentId]
+    }
+
+    override suspend fun saveAttachmentEncryptionKey(chatId: String, key: AttachmentEncryptionKey) {
+        attachmentKeys[chatId to key.id] = key.copy(chatId = chatId)
+    }
+
     override suspend fun participantsFor(chatId: String): List<ChatParticipantKey> {
         return participantsByChatId[chatId].orEmpty()
     }
@@ -1755,6 +2468,7 @@ private class FakeChatKeyStore(
         participantsByChatId.remove(chatId)
         chatPublicKeys.remove(chatId)
         chatPrivateKeys.remove(chatId)
+        attachmentKeys.keys.removeAll { (keyChatId, _) -> keyChatId == chatId }
     }
 
     override suspend fun clearAll() {
@@ -1765,15 +2479,18 @@ private class FakeChatKeyStore(
         participantsByChatId.clear()
         chatPublicKeys.clear()
         chatPrivateKeys.clear()
+        attachmentKeys.clear()
     }
 }
 
 private class FakeEncryptionService(
     private val generatedKeyPair: GeneratedKeyPair,
     private val generatedKeyPairs: MutableList<GeneratedKeyPair> = mutableListOf(),
+    private val failingPublicKeys: Set<String> = emptySet(),
 ) : EncryptionService {
     override val algorithmLabel: String = "fake"
     override val maxPayloadBytesPerChunk: Int = 190
+    private var generatedAttachmentKeyCount = 0
 
     override suspend fun generateKeyPair(): GeneratedKeyPair {
         return if (generatedKeyPairs.isNotEmpty()) {
@@ -1783,12 +2500,22 @@ private class FakeEncryptionService(
         }
     }
 
+    override suspend fun generateAttachmentKey(): GeneratedAttachmentKey {
+        generatedAttachmentKeyCount += 1
+        return GeneratedAttachmentKey(
+            key = "chacha20-poly1305-key-$generatedAttachmentKeyCount",
+            sizeBits = 256,
+            algorithmLabel = "ChaCha20-Poly1305",
+        )
+    }
+
     override suspend fun encrypt(message: String, publicKey: String): String = message
 
     override suspend fun decrypt(message: String, privateKey: String): String = message
 
     override suspend fun encryptToChunks(message: String, publicKey: String, chunkSizeBytes: Int): List<String> {
         require(publicKey.isNotBlank()) { "Public key must not be blank." }
+        check(publicKey !in failingPublicKeys) { "Encryption failed." }
         return listOf(message)
     }
 
@@ -1799,8 +2526,16 @@ private class FakeEncryptionService(
 
 private class FakeChatPreferencesDataSource(
     initialOpenedChatId: String? = null,
+    initialNickname: String = "",
+    initialLastPollTimestamp: String? = null,
+    initialUserNicknames: Map<String, String> = emptyMap(),
 ) : ChatPreferencesDataSource {
     private val openedChatId = MutableStateFlow(initialOpenedChatId)
+    private val nickname = MutableStateFlow(initialNickname)
+    private var lastPollTimestamp = initialLastPollTimestamp
+    private val userNicknames = initialUserNicknames.toMutableMap()
+    private val chatTitles = mutableMapOf<String, String>()
+    private var debugMode = false
 
     override fun observeLastOpenedChatId(): Flow<String?> = openedChatId.asStateFlow()
 
@@ -1814,8 +2549,57 @@ private class FakeChatPreferencesDataSource(
         openedChatId.value = null
     }
 
+    override suspend fun getLastPollTimestamp(): String? {
+        return lastPollTimestamp
+    }
+
+    override suspend fun saveLastPollTimestamp(timestamp: String) {
+        lastPollTimestamp = timestamp
+    }
+
+    override suspend fun clearLastPollTimestamp() {
+        lastPollTimestamp = null
+    }
+
+    override fun observeNickname(): Flow<String> = nickname.asStateFlow()
+
+    override suspend fun getNickname(): String = nickname.value
+
+    override suspend fun saveNickname(nickname: String) {
+        this.nickname.value = nickname
+    }
+
+    override suspend fun getUserNickname(userId: String): String? {
+        return userNicknames[userId]
+    }
+
+    override suspend fun saveUserNickname(userId: String, nickname: String) {
+        userNicknames[userId] = nickname
+    }
+
+    override suspend fun getChatTitle(chatId: String): String? {
+        return chatTitles[chatId]
+    }
+
+    override suspend fun saveChatTitle(chatId: String, title: String) {
+        chatTitles[chatId] = title
+    }
+
     override suspend fun clearAll() {
         clearLastOpenedChatId()
+        clearLastPollTimestamp()
+        nickname.value = ""
+        userNicknames.clear()
+        chatTitles.clear()
+        debugMode = false
+    }
+
+    override suspend fun isDebugModeEnabled(): Boolean {
+        return debugMode
+    }
+
+    override suspend fun setDebugModeEnabled(enabled: Boolean) {
+        debugMode = enabled
     }
 }
 
@@ -1829,6 +2613,7 @@ private fun createRepository(
             privateKey = "private-key",
         ),
     ),
+    preferencesDataSource: FakeChatPreferencesDataSource = FakeChatPreferencesDataSource(),
 ): OfflineFirstChatRepository {
     return OfflineFirstChatRepository(
         localDataSource = localDataSource,
@@ -1836,7 +2621,7 @@ private fun createRepository(
         chatMessageCipher = ChatMessageCipher(encryptionService, keyStore),
         chatKeyStore = keyStore,
         encryptionService = encryptionService,
-        chatPreferencesDataSource = FakeChatPreferencesDataSource(),
+        chatPreferencesDataSource = preferencesDataSource,
         json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
     )
 }

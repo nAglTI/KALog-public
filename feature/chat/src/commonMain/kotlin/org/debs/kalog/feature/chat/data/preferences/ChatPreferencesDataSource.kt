@@ -11,6 +11,12 @@ interface ChatPreferencesDataSource {
 
     suspend fun clearLastOpenedChatId()
 
+    suspend fun getLastPollTimestamp(): String?
+
+    suspend fun saveLastPollTimestamp(timestamp: String)
+
+    suspend fun clearLastPollTimestamp()
+
     fun observeNickname(): Flow<String>
 
     suspend fun getNickname(): String

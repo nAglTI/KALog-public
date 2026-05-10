@@ -7,8 +7,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.SnackbarHostState
 import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 import org.debs.kalog.feature.chat.presentation.components.UuidInputDialog
 import org.koin.core.parameter.parametersOf
@@ -27,6 +29,7 @@ fun ChatDetailsRoute(
     val state by viewModel.state.collectAsState()
     var isInviteDialogVisible by rememberSaveable { mutableStateOf(false) }
     var invitedUserUuid by rememberSaveable { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(viewModel) {
         viewModel.effect.collect { effect ->
@@ -37,6 +40,12 @@ fun ChatDetailsRoute(
                 }
                 ChatDetailsEffect.InvitationDeclined -> {
                     onBack()
+                }
+                is ChatDetailsEffect.ShowError -> {
+                    snackbarHostState.showSnackbar(effect.message)
+                }
+                is ChatDetailsEffect.ShowMessage -> {
+                    snackbarHostState.showSnackbar(effect.message)
                 }
             }
         }
@@ -78,6 +87,18 @@ fun ChatDetailsRoute(
         onSendClick = {
             viewModel.onEvent(ChatDetailsEvent.SendClicked)
         },
+        onAttachFileClick = {
+            viewModel.onEvent(ChatDetailsEvent.AttachFileClicked)
+        },
+        onPickImageClick = {
+            viewModel.onEvent(ChatDetailsEvent.PickImageClicked)
+        },
+        onRecordVoiceClick = {
+            viewModel.onEvent(ChatDetailsEvent.RecordVoiceClicked)
+        },
+        onRemoveAttachment = { attachmentId ->
+            viewModel.onEvent(ChatDetailsEvent.RemoveAttachmentDraft(attachmentId))
+        },
         onLoadMoreMessages = {
             viewModel.onEvent(ChatDetailsEvent.LoadMoreMessagesClicked)
         },
@@ -93,5 +114,6 @@ fun ChatDetailsRoute(
         onDeclineInvitation = {
             viewModel.onEvent(ChatDetailsEvent.DeclineInvitationClicked)
         },
+        snackbarHostState = snackbarHostState,
     )
 }

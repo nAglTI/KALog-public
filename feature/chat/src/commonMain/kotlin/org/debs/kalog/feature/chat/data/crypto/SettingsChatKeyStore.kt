@@ -46,6 +46,26 @@ class SettingsChatKeyStore(
         secureKeyValueStorage.putString(chatPrivateKeyKey(chatId), privateKey)
     }
 
+    override suspend fun attachmentEncryptionKey(chatId: String, attachmentId: String): AttachmentEncryptionKey? {
+        val serializedValue = secureKeyValueStorage.getStringOrNull(attachmentKeyKey(chatId, attachmentId)).orEmpty()
+        if (serializedValue.isBlank()) return null
+
+        return runCatching {
+            json.decodeFromString<AttachmentEncryptionKey>(serializedValue)
+        }.getOrNull()
+    }
+
+    override suspend fun saveAttachmentEncryptionKey(chatId: String, key: AttachmentEncryptionKey) {
+        secureKeyValueStorage.putString(
+            key = attachmentKeyKey(chatId, key.id),
+            value = json.encodeToString(key.copy(chatId = chatId)),
+        )
+        keyValueStorage.putString(
+            key = attachmentKeyIdsKey(chatId),
+            value = json.encodeToString(attachmentKeyIds(chatId) + key.id),
+        )
+    }
+
     override suspend fun participantsFor(chatId: String): List<ChatParticipantKey> {
         val serializedValue = keyValueStorage.getStringOrNull(participantsKey(chatId)).orEmpty()
         if (serializedValue.isBlank()) return emptyList()
@@ -66,6 +86,10 @@ class SettingsChatKeyStore(
         keyValueStorage.remove(chatPublicKeyKey(chatId))
         secureKeyValueStorage.remove(chatPrivateKeyKey(chatId))
         keyValueStorage.remove(participantsKey(chatId))
+        attachmentKeyIds(chatId).forEach { attachmentId ->
+            secureKeyValueStorage.remove(attachmentKeyKey(chatId, attachmentId))
+        }
+        keyValueStorage.remove(attachmentKeyIdsKey(chatId))
     }
 
     override suspend fun clearAll() {
@@ -77,7 +101,21 @@ class SettingsChatKeyStore(
 
     private fun chatPrivateKeyKey(chatId: String) = "$CHAT_PRIVATE_KEY_PREFIX.$chatId"
 
+    private fun attachmentKeyKey(chatId: String, attachmentId: String) =
+        "$ATTACHMENT_KEY_PREFIX.$chatId.$attachmentId"
+
+    private fun attachmentKeyIdsKey(chatId: String) = "$ATTACHMENT_KEY_IDS_PREFIX.$chatId"
+
     private fun participantsKey(chatId: String) = "$PARTICIPANTS_PREFIX.$chatId"
+
+    private suspend fun attachmentKeyIds(chatId: String): Set<String> {
+        val serializedValue = keyValueStorage.getStringOrNull(attachmentKeyIdsKey(chatId)).orEmpty()
+        if (serializedValue.isBlank()) return emptySet()
+
+        return runCatching {
+            json.decodeFromString<List<String>>(serializedValue).toSet()
+        }.getOrDefault(emptySet())
+    }
 
     private companion object {
         private const val CURRENT_USER_ID = "chat.keys.current_user.id"
@@ -86,6 +124,8 @@ class SettingsChatKeyStore(
         private const val SERVER_PUBLIC_KEY = "chat.keys.server.public"
         private const val CHAT_PUBLIC_KEY_PREFIX = "chat.keys.chat.public"
         private const val CHAT_PRIVATE_KEY_PREFIX = "chat.keys.chat.private"
+        private const val ATTACHMENT_KEY_PREFIX = "chat.keys.attachment.chacha20_poly1305"
+        private const val ATTACHMENT_KEY_IDS_PREFIX = "chat.keys.attachment.ids"
         private const val PARTICIPANTS_PREFIX = "chat.keys.participants"
     }
 }

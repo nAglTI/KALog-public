@@ -1,5 +1,6 @@
 package org.debs.kalog.feature.chat.data.crypto
 
+import kotlin.coroutines.cancellation.CancellationException
 import org.debs.kalog.core.crypto.EncryptionService
 
 class ChatMessageCipher(
@@ -7,13 +8,21 @@ class ChatMessageCipher(
     private val keyStore: ChatKeyStore,
 ) {
     suspend fun encryptOutgoing(chatId: String, message: String): List<EncryptedRecipientPayload> {
-        return keyStore.participantsFor(chatId).mapNotNull { participant ->
-            runCatching {
+        return keyStore.participantsFor(chatId).map { participant ->
+            if (participant.publicKey.isBlank()) {
+                throw ChatEncryptionException("Public key is missing for recipient ${participant.userId}.")
+            }
+
+            try {
                 EncryptedRecipientPayload(
                     recipientId = participant.userId,
                     chunks = encryptionService.encryptToChunks(message, participant.publicKey),
                 )
-            }.getOrNull()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                throw ChatEncryptionException("Failed to encrypt message for recipient ${participant.userId}.", error)
+            }
         }
     }
 
@@ -25,3 +34,8 @@ class ChatMessageCipher(
             .getOrElse { chunks.joinToString(separator = "") }
     }
 }
+
+class ChatEncryptionException(
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)

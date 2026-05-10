@@ -1,8 +1,10 @@
 package org.debs.kalog.feature.chat.domain.repository
 
 import kotlinx.coroutines.flow.Flow
+import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatParticipant
 import org.debs.kalog.feature.chat.domain.model.ChatThread
+import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
 
 interface ChatRepository {
     suspend fun startSession()
@@ -23,7 +25,13 @@ interface ChatRepository {
 
     suspend fun loadMoreMessages(chatId: String): Boolean
 
-    suspend fun sendMessage(chatId: String, plainText: String)
+    suspend fun sendMessage(
+        chatId: String,
+        plainText: String,
+        attachments: List<PreparedChatAttachment> = emptyList(),
+    )
+
+    suspend fun prepareAttachment(chatId: String, attachment: ChatAttachment): PreparedChatAttachment
 
     suspend fun createDirectChat(targetUserId: String): String
 

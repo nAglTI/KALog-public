@@ -1,5 +1,6 @@
 package org.debs.kalog.core.network.security
 
+import kotlin.coroutines.cancellation.CancellationException
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.network.model.SecurePayload
 
@@ -14,14 +15,22 @@ class CipherNetworkSecurityProvider(
     private val transportKeyProvider: TransportKeyProvider,
 ) : NetworkSecurityProvider {
     override suspend fun protectRequest(body: String): SecurePayload {
-        // FIXME: Do not silently fall back to plaintext in production when transport keys are missing.
-        val publicKey = transportKeyProvider.serverPublicKey() ?: return SecurePayload(body = body, isEncrypted = false)
-        return runCatching { encryptionService.encryptToChunks(body, publicKey) }
-            .fold(
-                onSuccess = { SecurePayload(chunks = it, isEncrypted = true) },
-                // FIXME: Encryption failures should fail closed instead of sending the original request body.
-                onFailure = { SecurePayload(body = body, isEncrypted = false) },
-            )
+        val publicKey = transportKeyProvider.serverPublicKey()
+            ?: throw TransportEncryptionException("Server public key is not initialized.")
+
+        val encryptedChunks = try {
+            encryptionService.encryptToChunks(body, publicKey)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw TransportEncryptionException("Failed to encrypt request body.", error)
+        }
+
+        if (encryptedChunks.isEmpty()) {
+            throw TransportEncryptionException("Encrypted request body is empty.")
+        }
+
+        return SecurePayload(chunks = encryptedChunks, isEncrypted = true)
     }
 
     override suspend fun unprotectResponse(payload: SecurePayload): String {
@@ -34,3 +43,8 @@ class CipherNetworkSecurityProvider(
             .getOrElse { payload.body.orEmpty() }
     }
 }
+
+class TransportEncryptionException(
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)

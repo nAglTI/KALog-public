@@ -28,6 +28,7 @@ import org.debs.kalog.feature.chat.domain.usecase.LoadMoreChatMessagesUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatDetailsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
+import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RunChatSyncLoopUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SetGroupChatPublicKeyUseCase
@@ -41,7 +42,7 @@ import org.debs.kalog.core.network.security.TransportKeyProvider
 import org.koin.dsl.module
 
 val chatFeatureModule = module {
-    single<ChatPreferencesDataSource> { SettingsChatPreferencesDataSource(get()) }
+    single<ChatPreferencesDataSource> { SettingsChatPreferencesDataSource(get(), get()) }
     single<ChatKeyStore> { SettingsChatKeyStore(get(), get(), get()) }
     single<TransportKeyProvider> { ChatTransportKeyProvider(get()) }
     single { ChatMessageCipher(get(), get()) }
@@ -66,11 +67,12 @@ val chatFeatureModule = module {
     factory { ObserveChatsUseCase(get()) }
     factory { ObserveChatDetailsUseCase(get()) }
     factory { OpenChatUseCase(get()) }
+    factory { PrepareChatAttachmentUseCase(get()) }
     factory { SendChatMessageUseCase(get()) }
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
     factory { ChatListViewModel(get(), get(), get(), get()) }
     factory { SettingsViewModel(get(), get(), get(), get()) }
-    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get()) }
+    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatInfoViewModel(chatId, get(), get(), get(), get()) }
 }

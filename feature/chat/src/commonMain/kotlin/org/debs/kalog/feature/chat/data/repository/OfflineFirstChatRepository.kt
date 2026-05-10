@@ -1,22 +1,26 @@
 package org.debs.kalog.feature.chat.data.repository
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.Month
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlin.time.TimeMark
-import kotlin.time.Duration.Companion.milliseconds
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.crypto.GeneratedKeyPair
 import org.debs.kalog.feature.chat.data.CURRENT_USER_DISPLAY_NAME
+import org.debs.kalog.feature.chat.data.crypto.AttachmentEncryptionKey
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
 import org.debs.kalog.feature.chat.data.crypto.ChatParticipantKey
@@ -24,10 +28,30 @@ import org.debs.kalog.feature.chat.data.local.ChatLocalDataSource
 import org.debs.kalog.feature.chat.data.local.LocalChatMessage
 import org.debs.kalog.feature.chat.data.local.LocalChatThread
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
-import org.debs.kalog.feature.chat.data.remote.*
-import org.debs.kalog.feature.chat.domain.model.*
+import org.debs.kalog.feature.chat.data.remote.ChatRemoteDataSource
+import org.debs.kalog.feature.chat.data.remote.NicknameProvidedServiceData
+import org.debs.kalog.feature.chat.data.remote.RemoteChatInfo
+import org.debs.kalog.feature.chat.data.remote.RemoteChatSummary
+import org.debs.kalog.feature.chat.data.remote.RemoteChatUser
+import org.debs.kalog.feature.chat.data.remote.RemoteMessage
+import org.debs.kalog.feature.chat.data.remote.RemotePolledMessages
+import org.debs.kalog.feature.chat.data.remote.RemoteSendPayload
+import org.debs.kalog.feature.chat.data.remote.ServiceMessageData
+import org.debs.kalog.feature.chat.domain.model.AvatarAccent
+import org.debs.kalog.feature.chat.domain.model.AvatarSpec
+import org.debs.kalog.feature.chat.domain.model.ChatAttachment
+import org.debs.kalog.feature.chat.domain.model.ChatAttachmentEncryptionSpec
+import org.debs.kalog.feature.chat.domain.model.ChatMessage
+import org.debs.kalog.feature.chat.domain.model.ChatParticipant
+import org.debs.kalog.feature.chat.domain.model.ChatThread
+import org.debs.kalog.feature.chat.domain.model.ChatType
+import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
+import org.debs.kalog.feature.chat.domain.model.InvitationStatus
+import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
 import org.debs.kalog.feature.chat.domain.repository.ChatRepository
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
+import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 internal class OfflineFirstChatRepository(
@@ -45,6 +69,7 @@ internal class OfflineFirstChatRepository(
     internal var lastPollTimestamp: String? = null
     private val syncLoopJob = MutableStateFlow<Job?>(null)
     private val syncEnabled = MutableStateFlow(true)
+    private val nicknameVersion = MutableStateFlow(0)
 
     override suspend fun startSession() {
         syncEnabled.value = true
@@ -53,6 +78,7 @@ internal class OfflineFirstChatRepository(
             if (sessionStarted) return
 
             try {
+                restoreLastPollTimestamp()
                 bootstrapSession()
                 sessionStarted = true
             } catch (error: CancellationException) {
@@ -111,14 +137,14 @@ internal class OfflineFirstChatRepository(
         localDataSource.clearAll()
         chatPreferencesDataSource.clearAll()
         chatKeyStore.clearAll()
+        nicknameVersion.value = nicknameVersion.value + 1
     }
 
     override suspend fun closeChat() {
         chatPreferencesDataSource.clearLastOpenedChatId()
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    override fun observeChats() = localDataSource.observeThreads().mapLatest { threads ->
+    override fun observeChats() = combine(localDataSource.observeThreads(), nicknameVersion) { threads, _ ->
         threads.map { thread ->
             thread.toDomain(
                 chatMessageCipher = chatMessageCipher,
@@ -130,7 +156,8 @@ internal class OfflineFirstChatRepository(
     override fun observeChat(chatId: String) = combine(
         localDataSource.observeThreads(),
         paginationStates,
-    ) { threads, states ->
+        nicknameVersion,
+    ) { threads, states, _ ->
         val thread = threads.firstOrNull { it.id == chatId } ?: return@combine null
         val paginationState = states[chatId] ?: MessagePaginationState()
         thread.toDomain(
@@ -174,6 +201,7 @@ internal class OfflineFirstChatRepository(
             }
 
             val orderedMessages = normalizeMessagesOldestFirst(history)
+            handleHistoricalNicknameMessages(orderedMessages)
             val currentUserId = requireCurrentUserId()
             if (loadedMessageCount(chatId) == 0) {
                 localDataSource.replaceMessages(
@@ -214,12 +242,16 @@ internal class OfflineFirstChatRepository(
         }
     }
 
-    override suspend fun sendMessage(chatId: String, plainText: String) {
+    override suspend fun sendMessage(
+        chatId: String,
+        plainText: String,
+        attachments: List<PreparedChatAttachment>,
+    ) {
         startSession()
         ensureUserSession()
         prepareChatParticipantsForSending(chatId)
 
-        val payloads = chatMessageCipher.encryptOutgoing(chatId, plainText)
+        val payloads = chatMessageCipher.encryptOutgoing(chatId, buildMessagePayload(plainText, attachments))
         if (payloads.isEmpty()) return
 
         remoteDataSource.sendMessage(
@@ -233,6 +265,32 @@ internal class OfflineFirstChatRepository(
         )
 
         localDataSource.markChatOpened(chatId)
+    }
+
+    override suspend fun prepareAttachment(chatId: String, attachment: ChatAttachment): PreparedChatAttachment {
+        startSession()
+        ensureUserSession()
+
+        val generatedKey = encryptionService.generateAttachmentKey()
+        val storedKey = AttachmentEncryptionKey(
+            id = attachment.id,
+            chatId = chatId,
+            algorithm = generatedKey.algorithmLabel,
+            sizeBits = generatedKey.sizeBits,
+            key = generatedKey.key,
+        )
+        chatKeyStore.saveAttachmentEncryptionKey(chatId, storedKey)
+
+        val preparedAttachment = attachment.copy(encryptionKeyId = storedKey.id)
+        return PreparedChatAttachment(
+            attachment = preparedAttachment,
+            encryption = ChatAttachmentEncryptionSpec(
+                uuid = storedKey.id,
+                key = storedKey.key,
+                algorithm = storedKey.algorithm,
+                sizeBits = storedKey.sizeBits,
+            ),
+        )
     }
 
     override suspend fun createDirectChat(targetUserId: String): String {
@@ -339,17 +397,28 @@ internal class OfflineFirstChatRepository(
         startSession()
         ensureUserSession()
 
-        val allChatIds = remoteDataSource.getChats().map { it.id }
+        val currentUserId = requireCurrentUserId()
+        rememberUserNickname(currentUserId, nickname)
+
+        val remoteChatIds = remoteDataSource.getChats().map { it.id }
+        val localThreads = localDataSource.observeThreads().value
+        val localChatIds = localThreads.map(LocalChatThread::id)
+        val allChatIds = (localChatIds + remoteChatIds)
+            .distinct()
+            .filter { chatId -> chatId in remoteChatIds || remoteChatIds.isEmpty() }
+        val pendingChatIds = localThreads
+            .filter { thread -> thread.invitationStatus == INVITATION_STATUS_PENDING }
+            .mapTo(mutableSetOf(), LocalChatThread::id)
 
         var sentCount = 0
         var lastError: Throwable? = null
 
         for (chatId in allChatIds.asReversed()) {
-            val hasKey = chatKeyStore.chatPublicKey(chatId) != null
-            if (!hasKey) continue
+            if (chatId in pendingChatIds) continue
             try {
-                sendNicknameProvidedServiceMessage(chatId, nickname)
-                sentCount++
+                if (sendNicknameProvidedServiceMessage(chatId, nickname)) {
+                    sentCount++
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -357,7 +426,7 @@ internal class OfflineFirstChatRepository(
             }
         }
 
-        if (sentCount == 0 && lastError != null) {
+        if (lastError != null) {
             throw lastError
         }
     }
@@ -461,6 +530,7 @@ internal class OfflineFirstChatRepository(
         val existingChatIds = localDataSource.observeThreads().value.map(LocalChatThread::id).toSet()
         val listedChatIds = chatSummaries.map(RemoteChatSummary::id).toSet()
 
+        handleHistoricalNicknameMessages(chatSummaries.flatMap(RemoteChatSummary::seedMessages))
         val threads = chatSummaries.map { chat ->
             buildLocalThreadFromSummary(
                 summary = chat,
@@ -473,13 +543,15 @@ internal class OfflineFirstChatRepository(
             chatKeyStore.clearChatState(removedChatId)
         }
         localDataSource.upsertThreads(threads)
-        updateLastPollTimestamp(
-            chatSummaries.flatMap { chat ->
-                chat.seedMessages.mapNotNull { message ->
-                    message.createdAt.takeIf { timestamp -> timestamp.isNotBlank() }
-                }
-            },
-        )
+        if (lastPollTimestamp == null) {
+            updateLastPollTimestamp(
+                chatSummaries.flatMap { chat ->
+                    chat.seedMessages.mapNotNull { message ->
+                        message.createdAt.takeIf { timestamp -> timestamp.isNotBlank() }
+                    }
+                },
+            )
+        }
     }
 
     private suspend fun syncChatParticipants(chatId: String) {
@@ -496,6 +568,7 @@ internal class OfflineFirstChatRepository(
         val currentUserId = requireCurrentUserId()
         val chatInfo = remoteDataSource.getChatInfo(chatId)
         saveChatParticipants(chatId, chatInfo.users, currentUserId)
+        handleHistoricalNicknameMessages(seedMessages)
         localDataSource.upsertThreads(
             listOf(
                 buildLocalThread(
@@ -519,20 +592,36 @@ internal class OfflineFirstChatRepository(
                 localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_ACCEPTED)
             }
         }
-        updateLastPollTimestamp(seedMessages.mapNotNull { message -> message.createdAt.takeIf(String::isNotBlank) })
+        if (lastPollTimestamp == null) {
+            updateLastPollTimestamp(seedMessages.mapNotNull { message -> message.createdAt.takeIf(String::isNotBlank) })
+        }
     }
 
-    private suspend fun syncUnknownChats(chatIds: Set<String>) {
+    private suspend fun syncUnknownChats(
+        chatIds: Set<String>,
+        messagesByChatId: Map<String, List<RemoteMessage>>,
+    ): Set<String> {
+        val syncedChatIds = mutableSetOf<String>()
         for (chatId in chatIds) {
             try {
                 syncChat(chatId, skipKeyRegistration = true)
-                localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_PENDING)
+                val shouldRegisterKey = messagesByChatId[chatId]
+                    .orEmpty()
+                    .any { message -> !message.isServiceMessage() }
+                if (shouldRegisterKey) {
+                    ensureChatKeyRegistered(chatId)
+                    localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_ACCEPTED)
+                } else {
+                    localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_PENDING)
+                }
+                syncedChatIds += chatId
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
                 // Chat sync may fail transiently; polling will retry on the next iteration.
             }
         }
+        return syncedChatIds
     }
 
     private suspend fun buildLocalThread(
@@ -546,9 +635,13 @@ internal class OfflineFirstChatRepository(
         val normalizedSeedMessages = normalizeMessagesOldestFirst(seedMessages)
         val seedMessagesStartPosition = existingThread?.lastMessagePosition?.plus(1) ?: 1L
         val savedTitle = chatPreferencesDataSource.getChatTitle(chatInfo.id)
-        val resolvedTitle = savedTitle ?: chatInfo.title.ifBlank {
-            buildPersonalChatTitle(chatInfo.type, chatInfo.users, currentUserId, chatPreferencesDataSource)
-        }
+        val resolvedTitle = resolveChatTitle(
+            type = chatInfo.type,
+            rawTitle = savedTitle ?: chatInfo.title,
+            users = chatInfo.users,
+            currentUserId = currentUserId,
+            fallbackTitle = existingThread?.title.orEmpty(),
+        )
 
         return LocalChatThread(
             id = chatInfo.id,
@@ -579,9 +672,13 @@ internal class OfflineFirstChatRepository(
         val normalizedSeedMessages = normalizeMessagesOldestFirst(summary.seedMessages)
         val seedMessagesStartPosition = existingThread?.lastMessagePosition?.plus(1) ?: 1L
         val savedTitle = chatPreferencesDataSource.getChatTitle(summary.id)
-        val resolvedTitle = savedTitle ?: summary.title.ifBlank {
-            existingThread?.title.orEmpty()
-        }
+        val resolvedTitle = resolveChatTitle(
+            type = summary.type,
+            rawTitle = savedTitle ?: summary.title,
+            users = emptyList(),
+            currentUserId = currentUserId,
+            fallbackTitle = existingThread?.title.orEmpty(),
+        )
 
         return LocalChatThread(
             id = summary.id,
@@ -625,6 +722,31 @@ internal class OfflineFirstChatRepository(
         )
     }
 
+    private suspend fun resolveChatTitle(
+        type: String,
+        rawTitle: String,
+        users: List<RemoteChatUser>,
+        currentUserId: String,
+        fallbackTitle: String,
+    ): String {
+        if (type.toChatType() != ChatType.Personal) {
+            return rawTitle.ifBlank { fallbackTitle }
+        }
+
+        val titleFromUserId = rawTitle
+            .takeIf(String::isNotBlank)
+            ?.let { title -> chatPreferencesDataSource.getUserNickname(title) }
+        if (titleFromUserId != null) return titleFromUserId
+
+        val titleFromParticipants = buildPersonalChatTitle(
+            type = type,
+            users = users,
+            currentUserId = currentUserId,
+            chatPreferencesDataSource = chatPreferencesDataSource,
+        )
+        return rawTitle.ifBlank { titleFromParticipants.ifBlank { fallbackTitle } }
+    }
+
     private suspend fun removeLocalChat(chatId: String) {
         val remainingChatIds = localDataSource.observeThreads().value
             .map(LocalChatThread::id)
@@ -640,19 +762,24 @@ internal class OfflineFirstChatRepository(
             return
         }
 
-        val affectedChatIds = result.messages.map(RemoteMessage::chatId).toSet()
+        val messagesByChatId = result.messages.groupBy(RemoteMessage::chatId)
+        val affectedChatIds = messagesByChatId.keys
         val knownChatIds = localDataSource.observeThreads().value.map(LocalChatThread::id).toSet()
-        syncUnknownChats(affectedChatIds - knownChatIds)
+        syncUnknownChats(
+            chatIds = affectedChatIds - knownChatIds,
+            messagesByChatId = messagesByChatId,
+        )
 
         val currentUserId = requireCurrentUserId()
         val openedChatId = chatPreferencesDataSource.currentOpenedChatId()
         val refreshedChatIds = localDataSource.observeThreads().value.map(LocalChatThread::id).toSet()
+        val applicableMessages = result.messages.filter { message -> message.chatId in refreshedChatIds }
+        handleServiceMessages(applicableMessages)
+
         val chatIdsNeedingParticipantRefresh = mutableSetOf<String>()
-        result.messages
+        applicableMessages
             .groupBy(RemoteMessage::chatId)
             .forEach { (chatId, messages) ->
-                if (chatId !in refreshedChatIds) return@forEach
-
                 val existingMessageIds = localDataSource.observeThreads().value
                     .firstOrNull { thread -> thread.id == chatId }
                     ?.messages
@@ -678,8 +805,7 @@ internal class OfflineFirstChatRepository(
                 } else {
                     orderedMessages.count { message ->
                         message.id !in existingMessageIds &&
-                            !message.type.equals("service", ignoreCase = true) &&
-                            !message.type.equals("system", ignoreCase = true) &&
+                            !message.isServiceMessage() &&
                             message.fromUserId != currentUserId
                     }
                 }
@@ -688,17 +814,19 @@ internal class OfflineFirstChatRepository(
                 }
             }
         refreshParticipantsSafely(chatIdsNeedingParticipantRefresh)
+        if (affectedChatIds.any { chatId -> chatId !in refreshedChatIds }) {
+            return
+        }
         updateLastPollTimestamp(
             listOfNotNull(result.timestamp) + result.messages.mapNotNull { message ->
                 message.createdAt.takeIf(String::isNotBlank)
             },
         )
-        handleServiceMessages(result.messages)
     }
 
     private suspend fun handleServiceMessages(messages: List<RemoteMessage>) {
         val serviceMessages = messages.filter { message ->
-            message.type.equals("service", ignoreCase = true)
+            message.isServiceMessage()
         }
         for (message in serviceMessages) {
             when (message.chunks.firstOrNull()?.trim().orEmpty()) {
@@ -714,7 +842,8 @@ internal class OfflineFirstChatRepository(
                         userId = decodeServiceMessageData(message)?.userID,
                     )
                 }
-                SERVICE_EVENT_USER_NICKNAME_PROVIDED -> {
+                SERVICE_EVENT_USER_NICKNAME_PROVIDED,
+                SERVICE_EVENT_NICKNAME_PROVIDED -> {
                     handleUserNicknameProvided(message)
                 }
             }
@@ -799,61 +928,92 @@ internal class OfflineFirstChatRepository(
         if (decryptedPayload.isBlank()) return
 
         val data = runCatching {
-            json.decodeFromString<UserJoinedServiceData>(decryptedPayload)
+            json.decodeFromString<NicknameProvidedServiceData>(decryptedPayload)
         }.getOrNull() ?: return
 
         if (data.nickname.isNotBlank()) {
-            chatPreferencesDataSource.saveUserNickname(data.userID, data.nickname)
-            updateParticipantDisplayName(message.chatId, data.userID, data.nickname)
-            val currentUserId = chatKeyStore.currentUserId()
-            if (data.userID != currentUserId) {
-                val thread = localDataSource.observeThreads().value.firstOrNull { it.id == message.chatId }
-                if (thread != null && thread.typeRaw.toChatType() == ChatType.Personal) {
-                    localDataSource.updateChatTitle(message.chatId, data.nickname)
-                }
-            }
+            rememberUserNickname(data.userID, data.nickname)
         }
+    }
+
+    private suspend fun handleHistoricalNicknameMessages(messages: List<RemoteMessage>) {
+        messages
+            .filter(RemoteMessage::isNicknameServiceMessage)
+            .forEach { message -> handleUserNicknameProvided(message) }
+    }
+
+    private suspend fun rememberUserNickname(userId: String, nickname: String) {
+        val normalizedNickname = nickname.trim()
+        if (userId.isBlank() || normalizedNickname.isBlank()) return
+
+        chatPreferencesDataSource.saveUserNickname(userId, normalizedNickname)
+        localDataSource.observeThreads().value.forEach { thread ->
+            updateParticipantDisplayName(thread.id, userId, normalizedNickname)
+            updatePersonalChatTitle(thread, userId, normalizedNickname)
+        }
+        nicknameVersion.value = nicknameVersion.value + 1
     }
 
     private suspend fun updateParticipantDisplayName(chatId: String, userId: String, nickname: String) {
         val participants = chatKeyStore.participantsFor(chatId)
+        if (participants.none { participant -> participant.userId == userId && !participant.isCurrentUser }) return
+
         val updated = participants.map { participant ->
-            if (participant.userId == userId && !participant.isCurrentUser) {
-                participant.copy(displayName = nickname)
-            } else {
-                participant
-            }
+            if (participant.userId == userId && !participant.isCurrentUser) participant.copy(displayName = nickname)
+            else participant
         }
         chatKeyStore.saveParticipants(chatId, updated)
+    }
+
+    private suspend fun updatePersonalChatTitle(thread: LocalChatThread, userId: String, nickname: String) {
+        if (thread.typeRaw.toChatType() != ChatType.Personal) return
+
+        val participants = chatKeyStore.participantsFor(thread.id)
+        val isOtherParticipant = participants.any { participant ->
+            participant.userId == userId && !participant.isCurrentUser
+        }
+        if (!isOtherParticipant && thread.title != userId) return
+
+        localDataSource.updateChatTitle(thread.id, nickname)
+        chatPreferencesDataSource.saveChatTitle(thread.id, nickname)
     }
 
     private suspend fun sendNicknameProvidedServiceMessage(
         chatId: String,
         nickname: String,
         recipientUserId: String? = null,
-    ) {
+    ): Boolean {
         val currentUserId = requireCurrentUserId()
-        val data = UserJoinedServiceData(userID = currentUserId, nickname = nickname)
+        val data = NicknameProvidedServiceData(userID = currentUserId, nickname = nickname)
         val dataJson = json.encodeToString(data)
 
         prepareChatParticipantsForSending(chatId)
         val participants = chatKeyStore.participantsFor(chatId).let { all ->
-            if (recipientUserId != null) all.filter { it.userId == recipientUserId } else all
+            val recipients = all.filter { participant ->
+                !participant.isCurrentUser && participant.userId != currentUserId
+            }
+            if (recipientUserId != null) {
+                recipients.filter { participant -> participant.userId == recipientUserId }
+            } else {
+                recipients
+            }
         }
 
-        val payloads = participants.mapNotNull { participant ->
-            runCatching {
-                val eventTypeChunk = SERVICE_EVENT_USER_NICKNAME_PROVIDED
-                val encryptedDataChunks = encryptionService.encryptToChunks(dataJson, participant.publicKey)
-                RemoteSendPayload(
-                    recipientId = participant.userId,
-                    chunks = listOf(eventTypeChunk) + encryptedDataChunks,
-                )
-            }.getOrNull()
+        val payloads = participants.map { participant ->
+            if (participant.publicKey.isBlank()) {
+                error("Public key is missing for nickname recipient ${participant.userId}.")
+            }
+            val eventTypeChunk = SERVICE_EVENT_USER_NICKNAME_PROVIDED
+            val encryptedDataChunks = encryptionService.encryptToChunks(dataJson, participant.publicKey)
+            RemoteSendPayload(
+                recipientId = participant.userId,
+                chunks = listOf(eventTypeChunk) + encryptedDataChunks,
+            )
         }
-        if (payloads.isEmpty()) return
+        if (payloads.isEmpty()) return false
 
         remoteDataSource.sendServiceMessage(chatId, payloads)
+        return true
     }
 
     private suspend fun handlePublicKeyProvided(chatId: String, userId: String?) {
@@ -870,7 +1030,13 @@ internal class OfflineFirstChatRepository(
         if (isNewKey) {
             val nickname = chatPreferencesDataSource.getNickname()
             if (nickname.isNotBlank()) {
-                runCatching { sendNicknameProvidedServiceMessage(chatId, nickname, recipientUserId = userId) }
+                try {
+                    sendNicknameProvidedServiceMessage(chatId, nickname, recipientUserId = userId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    // The next nickname update or key-provided event can retry this service message.
+                }
             }
         }
     }
@@ -912,6 +1078,43 @@ internal class OfflineFirstChatRepository(
         }
     }
 
+    private fun buildMessagePayload(
+        plainText: String,
+        attachments: List<PreparedChatAttachment>,
+    ): String {
+        if (attachments.isEmpty()) return plainText
+
+        return json.encodeToString(
+            OutgoingMessagePayload(
+                message = plainText,
+                attachments = attachments.map { prepared ->
+                    OutgoingAttachmentPayload(
+                        uuid = prepared.encryption.uuid,
+                        key = prepared.encryption.key,
+                    )
+                },
+            ),
+        )
+    }
+
+    private suspend fun restoreLastPollTimestamp() {
+        if (lastPollTimestamp == null) {
+            lastPollTimestamp = chatPreferencesDataSource.getLastPollTimestamp()
+        }
+    }
+
+    private suspend fun updateLastPollTimestamp(candidates: Iterable<String>) {
+        val latest = latestTimestamp(listOfNotNull(lastPollTimestamp) + candidates)
+        if (latest != null && latest != lastPollTimestamp) {
+            lastPollTimestamp = latest
+            chatPreferencesDataSource.saveLastPollTimestamp(latest)
+        }
+    }
+
+    private suspend fun updateLastPollTimestamp(candidate: String?) {
+        updateLastPollTimestamp(listOfNotNull(candidate))
+    }
+
     private suspend fun generateChatKeyPair(): GeneratedKeyPair {
         return encryptionService.generateKeyPair()
     }
@@ -938,6 +1141,7 @@ internal class OfflineFirstChatRepository(
         private const val SERVICE_EVENT_USER_ADDED = "user_added"
         private const val SERVICE_EVENT_PUBLIC_KEY_PROVIDED = "public_key_provided"
         private const val SERVICE_EVENT_USER_NICKNAME_PROVIDED = "user_nickname_provided"
+        private const val SERVICE_EVENT_NICKNAME_PROVIDED = "nickname_provided"
         private const val INVITATION_STATUS_PENDING = "pending"
         private const val INVITATION_STATUS_ACCEPTED = "accepted"
     }
@@ -947,6 +1151,18 @@ private data class MessagePaginationState(
     val nextOffset: Int = 0,
     val hasMore: Boolean = true,
     val isLoading: Boolean = false,
+)
+
+@Serializable
+private data class OutgoingMessagePayload(
+    @SerialName("message") val message: String,
+    @SerialName("attachments") val attachments: List<OutgoingAttachmentPayload>,
+)
+
+@Serializable
+private data class OutgoingAttachmentPayload(
+    @SerialName("uuid") val uuid: String,
+    @SerialName("key") val key: String,
 )
 
 private suspend fun LocalChatThread.toDomain(
@@ -960,7 +1176,10 @@ private suspend fun LocalChatThread.toDomain(
         title = title,
         subtitle = subtitle,
         type = typeRaw.toChatType(),
-        avatar = AvatarSpec(initials = avatarInitials, accent = avatarAccent),
+        avatar = AvatarSpec(
+            initials = buildAvatarInitials(title).takeUnless { it == "--" } ?: avatarInitials,
+            accent = avatarAccent,
+        ),
         unreadCount = unreadCount,
         messages = messages.mapNotNull { message ->
             message.toDomain(chatMessageCipher, chatPreferencesDataSource)
@@ -989,6 +1208,7 @@ private suspend fun LocalChatMessage.toDomain(
             chatId = chatId,
             chunks = encryptedChunks,
             chatMessageCipher = chatMessageCipher,
+            chatPreferencesDataSource = chatPreferencesDataSource,
             debugMode = debugMode,
         ) ?: return null
         return ChatMessage.Service(
@@ -1027,6 +1247,7 @@ private suspend fun decodeServiceMessageBody(
     chatId: String,
     chunks: List<String>,
     chatMessageCipher: ChatMessageCipher,
+    chatPreferencesDataSource: ChatPreferencesDataSource? = null,
     debugMode: Boolean = false,
 ): String? {
     if (chunks.isEmpty()) return if (debugMode) "" else null
@@ -1051,15 +1272,19 @@ private suspend fun decodeServiceMessageBody(
             val data = payload?.let {
                 runCatching { Json.decodeFromString<ServiceMessageData>(it) }.getOrNull()
             }
-            if (data != null) "${data.userID.take(8)}… joined the chat"
+            val displayName = data?.userID?.let { userId ->
+                chatPreferencesDataSource?.getUserNickname(userId) ?: userId.take(8)
+            }
+            if (displayName != null) "$displayName joined the chat"
             else "A user joined the chat"
         }
 
-        "user_nickname_provided" -> {
+        "user_nickname_provided",
+        "nickname_provided" -> {
             val data = payload?.let {
-                runCatching { Json.decodeFromString<UserJoinedServiceData>(it) }.getOrNull()
+                runCatching { Json.decodeFromString<NicknameProvidedServiceData>(it) }.getOrNull()
             }
-            if (data != null) "${data.userID.take(8)}… changed their nickname to ${data.nickname}"
+            if (data != null) "${data.nickname} changed their nickname"
             else "A user changed their nickname"
         }
 
@@ -1072,7 +1297,7 @@ private fun RemoteMessage.toLocal(
     position: Long,
 ): LocalChatMessage {
     val isMine = fromUserId == currentUserId
-    val isService = type.equals("service", ignoreCase = true) || type.equals("system", ignoreCase = true)
+    val isService = isServiceMessage()
     return LocalChatMessage(
         id = id,
         chatId = chatId,
@@ -1087,6 +1312,16 @@ private fun RemoteMessage.toLocal(
         fromUserId = fromUserId,
         toUserId = toUserId,
     )
+}
+
+private fun RemoteMessage.isServiceMessage(): Boolean {
+    return type.equals("service", ignoreCase = true) || type.equals("system", ignoreCase = true)
+}
+
+private fun RemoteMessage.isNicknameServiceMessage(): Boolean {
+    val eventType = chunks.firstOrNull()?.trim().orEmpty()
+    return isServiceMessage() &&
+        (eventType == "user_nickname_provided" || eventType == "nickname_provided")
 }
 
 internal fun String.toDisplayTimestamp(): String {
@@ -1149,14 +1384,6 @@ private fun LocalDateTime.timeString(): String {
 }
 
 private fun Int.twoDigits(): String = toString().padStart(2, '0')
-
-private fun OfflineFirstChatRepository.updateLastPollTimestamp(candidates: Iterable<String>) {
-    lastPollTimestamp = latestTimestamp(listOfNotNull(lastPollTimestamp) + candidates)
-}
-
-private fun OfflineFirstChatRepository.updateLastPollTimestamp(candidate: String?) {
-    updateLastPollTimestamp(listOfNotNull(candidate))
-}
 
 private fun latestTimestamp(candidates: Iterable<String>): String? {
     return candidates

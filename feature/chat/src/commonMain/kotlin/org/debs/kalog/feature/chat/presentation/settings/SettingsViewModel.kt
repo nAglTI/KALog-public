@@ -72,7 +72,7 @@ class SettingsViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                _state.update { it.copy(savedNickname = trimmed, nicknameSaved = false, nicknameSaveError = true) }
+                _state.update { it.copy(nicknameSaved = false, nicknameSaveError = true) }
             }
         }
     }

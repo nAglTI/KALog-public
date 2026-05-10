@@ -2,6 +2,7 @@ package org.debs.kalog.core.crypto
 
 import dev.whyoleg.cryptography.BinarySize.Companion.bits
 import dev.whyoleg.cryptography.CryptographyProvider
+import dev.whyoleg.cryptography.algorithms.ChaCha20Poly1305
 import dev.whyoleg.cryptography.algorithms.RSA
 import dev.whyoleg.cryptography.algorithms.SHA256
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,8 @@ interface EncryptionService {
     val maxPayloadBytesPerChunk: Int
 
     suspend fun generateKeyPair(): GeneratedKeyPair
+
+    suspend fun generateAttachmentKey(): GeneratedAttachmentKey
 
     suspend fun encrypt(message: String, publicKey: String): String
 
@@ -33,12 +36,22 @@ data class GeneratedKeyPair(
     val privateKey: String,
 )
 
+data class GeneratedAttachmentKey(
+    val key: String,
+    val sizeBits: Int,
+    val algorithmLabel: String,
+)
+
 class RsaOaepEncryptionService : EncryptionService {
     override val algorithmLabel: String = "RSA-OAEP / SHA-256"
     override val maxPayloadBytesPerChunk: Int = 190
 
     override suspend fun generateKeyPair(): GeneratedKeyPair {
         return RsaOaepCryptoManager.generateKeyPair()
+    }
+
+    override suspend fun generateAttachmentKey(): GeneratedAttachmentKey {
+        return ChaCha20Poly1305CryptoManager.generateKey()
     }
 
     override suspend fun encrypt(message: String, publicKey: String): String {
@@ -59,6 +72,25 @@ class RsaOaepEncryptionService : EncryptionService {
 
     override suspend fun decryptFromChunks(chunks: List<String>, privateKey: String): String {
         return RsaOaepCryptoManager.decryptFromChunks(chunks, privateKey)
+    }
+}
+
+object ChaCha20Poly1305CryptoManager {
+    private const val KEY_SIZE_BITS = 256
+    private const val ALGORITHM_LABEL = "ChaCha20-Poly1305"
+
+    @OptIn(ExperimentalEncodingApi::class)
+    suspend fun generateKey(): GeneratedAttachmentKey = withContext(Dispatchers.Default) {
+        val key = CryptographyProvider.Default
+            .get(ChaCha20Poly1305)
+            .keyGenerator()
+            .generateKey()
+
+        GeneratedAttachmentKey(
+            key = Base64.encode(key.encodeToByteArrayBlocking(ChaCha20Poly1305.Key.Format.RAW)),
+            sizeBits = KEY_SIZE_BITS,
+            algorithmLabel = ALGORITHM_LABEL,
+        )
     }
 }
 

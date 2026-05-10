@@ -2,9 +2,11 @@ package org.debs.kalog.feature.chat.data.preferences
 
 import kotlinx.coroutines.flow.map
 import org.debs.kalog.core.preferences.KeyValueStorage
+import org.debs.kalog.core.preferences.SecureKeyValueStorage
 
 class SettingsChatPreferencesDataSource(
     private val keyValueStorage: KeyValueStorage,
+    private val secureKeyValueStorage: SecureKeyValueStorage,
 ) : ChatPreferencesDataSource {
     override fun observeLastOpenedChatId() = keyValueStorage
         .observeString(LAST_OPENED_CHAT_ID, "")
@@ -22,6 +24,18 @@ class SettingsChatPreferencesDataSource(
         keyValueStorage.remove(LAST_OPENED_CHAT_ID)
     }
 
+    override suspend fun getLastPollTimestamp(): String? {
+        return keyValueStorage.getStringOrNull(LAST_POLL_TIMESTAMP)?.ifBlank { null }
+    }
+
+    override suspend fun saveLastPollTimestamp(timestamp: String) {
+        keyValueStorage.putString(LAST_POLL_TIMESTAMP, timestamp)
+    }
+
+    override suspend fun clearLastPollTimestamp() {
+        keyValueStorage.remove(LAST_POLL_TIMESTAMP)
+    }
+
     override fun observeNickname() = keyValueStorage
         .observeString(NICKNAME, "")
 
@@ -34,11 +48,11 @@ class SettingsChatPreferencesDataSource(
     }
 
     override suspend fun getUserNickname(userId: String): String? {
-        return keyValueStorage.getStringOrNull(userNicknameKey(userId))?.ifBlank { null }
+        return secureKeyValueStorage.getStringOrNull(userNicknameKey(userId))?.ifBlank { null }
     }
 
     override suspend fun saveUserNickname(userId: String, nickname: String) {
-        keyValueStorage.putString(userNicknameKey(userId), nickname)
+        secureKeyValueStorage.putString(userNicknameKey(userId), nickname)
     }
 
     override suspend fun getChatTitle(chatId: String): String? {
@@ -51,6 +65,7 @@ class SettingsChatPreferencesDataSource(
 
     override suspend fun clearAll() {
         clearLastOpenedChatId()
+        clearLastPollTimestamp()
     }
 
     override suspend fun isDebugModeEnabled(): Boolean {
@@ -67,6 +82,7 @@ class SettingsChatPreferencesDataSource(
 
     private companion object {
         private const val LAST_OPENED_CHAT_ID = "chat.last_opened_id"
+        private const val LAST_POLL_TIMESTAMP = "chat.last_poll_timestamp"
         private const val NICKNAME = "user.nickname"
         private const val USER_NICKNAME_PREFIX = "user.nickname."
         private const val CHAT_TITLE_PREFIX = "chat.title."

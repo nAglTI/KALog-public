@@ -31,6 +31,38 @@ enum class InvitationStatus {
     Accepted,
 }
 
+enum class ChatAttachmentKind {
+    File,
+    Image,
+    Voice,
+}
+
+data class ChatAttachment(
+    val id: String,
+    val kind: ChatAttachmentKind,
+    val name: String,
+    val mimeType: String? = null,
+    val sizeBytes: Long? = null,
+    val localUri: String? = null,
+    val durationMillis: Long? = null,
+    val encryptionKeyId: String? = null,
+) {
+    val uuid: String
+        get() = id
+}
+
+data class ChatAttachmentEncryptionSpec(
+    val uuid: String,
+    val key: String,
+    val algorithm: String,
+    val sizeBits: Int,
+)
+
+data class PreparedChatAttachment(
+    val attachment: ChatAttachment,
+    val encryption: ChatAttachmentEncryptionSpec,
+)
+
 sealed interface ChatMessage {
     val id: String
     val timestamp: String
@@ -42,6 +74,7 @@ sealed interface ChatMessage {
         override val timestamp: String,
         val isMine: Boolean,
         val deliveryStatus: DeliveryStatus = DeliveryStatus.Sent,
+        val attachments: List<ChatAttachment> = emptyList(),
     ) : ChatMessage
 
     data class Service(

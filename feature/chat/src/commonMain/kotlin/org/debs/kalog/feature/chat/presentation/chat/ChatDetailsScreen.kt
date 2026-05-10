@@ -31,9 +31,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.animation.AnimatedVisibility
@@ -73,8 +79,11 @@ import kotlinx.coroutines.launch
 import org.debs.kalog.feature.chat.presentation.platform.hasSoftwareKeyboard
 import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
+import org.debs.kalog.feature.chat.domain.model.ChatAttachment
+import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
+import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
 import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
 
 @Composable
@@ -84,14 +93,21 @@ fun ChatDetailsScreen(
     onBack: () -> Unit,
     onDraftChanged: (String) -> Unit,
     onSendClick: () -> Unit,
+    onAttachFileClick: () -> Unit,
+    onPickImageClick: () -> Unit,
+    onRecordVoiceClick: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
     onLoadMoreMessages: () -> Unit,
     onInviteUserClick: () -> Unit,
     onChatInfoClick: () -> Unit = {},
     onAcceptInvitation: () -> Unit = {},
     onDeclineInvitation: () -> Unit = {},
     modifier: Modifier = Modifier,
+    snackbarHostState: SnackbarHostState? = null,
 ) {
     val listState = rememberLazyListState()
+    val defaultSnackbarHostState = remember { SnackbarHostState() }
+    val resolvedSnackbarHostState = snackbarHostState ?: defaultSnackbarHostState
     val hasLoadMoreItem = state.hasMoreMessages || state.isLoadingMoreMessages
 
     val showScrollToBottom by remember {
@@ -141,6 +157,9 @@ fun ChatDetailsScreen(
                 onChatInfoClick = onChatInfoClick,
             )
         },
+        snackbarHost = {
+            SnackbarHost(resolvedSnackbarHostState)
+        },
         bottomBar = {
             if (state.isPendingInvitation) {
                 InvitationBanner(
@@ -151,9 +170,15 @@ fun ChatDetailsScreen(
             } else {
                 MessageComposer(
                     draft = state.draft,
+                    pendingAttachments = state.pendingAttachments,
+                    isPreparingAttachment = state.isPreparingAttachment,
                     canSend = state.canSend,
                     onDraftChanged = onDraftChanged,
                     onSendClick = onSendClick,
+                    onAttachFileClick = onAttachFileClick,
+                    onPickImageClick = onPickImageClick,
+                    onRecordVoiceClick = onRecordVoiceClick,
+                    onRemoveAttachment = onRemoveAttachment,
                 )
             }
         },
@@ -511,9 +536,15 @@ private fun InvitationBanner(
 @Composable
 private fun MessageComposer(
     draft: String,
+    pendingAttachments: List<PreparedChatAttachment>,
+    isPreparingAttachment: Boolean,
     canSend: Boolean,
     onDraftChanged: (String) -> Unit,
     onSendClick: () -> Unit,
+    onAttachFileClick: () -> Unit,
+    onPickImageClick: () -> Unit,
+    onRecordVoiceClick: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     var suppressKeyboard by remember { mutableStateOf(hasSoftwareKeyboard) }
@@ -527,100 +558,235 @@ private fun MessageComposer(
         color = Color.White.copy(alpha = 0.96f),
         shadowElevation = 12.dp,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.Bottom,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Surface(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            ) {
-                val scrollState = rememberScrollState()
-                BasicTextField(
-                    value = draft,
-                    onValueChange = onDraftChanged,
-                    readOnly = suppressKeyboard,
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    modifier = Modifier
-                        .focusRequester(focusRequester)
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    if (event.type == PointerEventType.Press) {
-                                        suppressKeyboard = false
-                                    }
-                                }
-                            }
-                        }
-                        .onPreviewKeyEvent { event ->
-                            if (hasSoftwareKeyboard) return@onPreviewKeyEvent false
-                            if (event.key == Key.Enter && event.type == KeyEventType.KeyDown) {
-                                if (event.isCtrlPressed) {
-                                    onDraftChanged(draft + "\n")
-                                    true
-                                } else {
-                                    if (canSend) {
-                                        onSendClick()
-                                        focusRequester.requestFocus()
-                                    }
-                                    true
-                                }
-                            } else {
-                                false
-                            }
-                        }
-                        .fillMaxWidth()
-                        .heightIn(max = 160.dp)
-                        .verticalScroll(scrollState)
-                        .padding(horizontal = 18.dp, vertical = 14.dp),
-                    decorationBox = { innerTextField ->
-                        if (draft.isBlank()) {
-                            Text(
-                                text = "Write a message",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        innerTextField()
-                    },
+            if (pendingAttachments.isNotEmpty()) {
+                PendingAttachmentDrafts(
+                    attachments = pendingAttachments,
+                    onRemoveAttachment = onRemoveAttachment,
                 )
             }
-            Surface(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(enabled = canSend, onClick = {
-                        onSendClick()
-                        focusRequester.requestFocus()
-                    }),
-                shape = CircleShape,
-                color = if (canSend) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                },
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Bottom,
             ) {
-                Box(
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                    contentAlignment = Alignment.Center,
+                AttachmentActionButton(
+                    icon = Icons.Outlined.AttachFile,
+                    contentDescription = "Attach file",
+                    enabled = !isPreparingAttachment,
+                    onClick = onAttachFileClick,
+                )
+                AttachmentActionButton(
+                    icon = Icons.Outlined.PhotoLibrary,
+                    contentDescription = "Pick image",
+                    enabled = !isPreparingAttachment,
+                    onClick = onPickImageClick,
+                )
+                AttachmentActionButton(
+                    icon = Icons.Outlined.Mic,
+                    contentDescription = "Record voice",
+                    enabled = !isPreparingAttachment,
+                    onClick = onRecordVoiceClick,
+                )
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                ) {
+                    val scrollState = rememberScrollState()
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = onDraftChanged,
+                        readOnly = suppressKeyboard,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        modifier = Modifier
+                            .focusRequester(focusRequester)
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        if (event.type == PointerEventType.Press) {
+                                            suppressKeyboard = false
+                                        }
+                                    }
+                                }
+                            }
+                            .onPreviewKeyEvent { event ->
+                                if (hasSoftwareKeyboard) return@onPreviewKeyEvent false
+                                if (event.key == Key.Enter && event.type == KeyEventType.KeyDown) {
+                                    if (event.isCtrlPressed) {
+                                        onDraftChanged(draft + "\n")
+                                        true
+                                    } else {
+                                        if (canSend) {
+                                            onSendClick()
+                                            focusRequester.requestFocus()
+                                        }
+                                        true
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                            .fillMaxWidth()
+                            .heightIn(max = 160.dp)
+                            .verticalScroll(scrollState)
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        decorationBox = { innerTextField ->
+                            if (draft.isBlank()) {
+                                Text(
+                                    text = "Write a message",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            innerTextField()
+                        },
+                    )
+                }
+                Surface(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(enabled = canSend, onClick = {
+                            onSendClick()
+                            focusRequester.requestFocus()
+                        }),
+                    shape = CircleShape,
+                    color = if (canSend) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                    },
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Send",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 0.12f else 0.06f),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else 0.45f),
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PendingAttachmentDrafts(
+    attachments: List<PreparedChatAttachment>,
+    onRemoveAttachment: (String) -> Unit,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        attachments.forEach { prepared ->
+            val attachment = prepared.attachment
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Send",
+                        text = attachment.kind.label(),
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = attachment.displayName(),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "Remove attachment",
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .clickable { onRemoveAttachment(attachment.id) },
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
         }
     }
+}
+
+private fun ChatAttachmentKind.label(): String {
+    return when (this) {
+        ChatAttachmentKind.File -> "FILE"
+        ChatAttachmentKind.Image -> "IMG"
+        ChatAttachmentKind.Voice -> "VOICE"
+    }
+}
+
+private fun ChatAttachment.displayName(): String {
+    return when {
+        durationMillis != null -> "$name (${durationMillis / 1000}s)"
+        sizeBytes != null -> "$name (${sizeBytes.toReadableBytes()})"
+        else -> name
+    }
+}
+
+private fun Long.toReadableBytes(): String {
+    if (this < 1024L) return "$this B"
+    val kib = this / 1024.0
+    if (kib < 1024.0) return "${kib.formatOneDecimal()} KB"
+    return "${(kib / 1024.0).formatOneDecimal()} MB"
+}
+
+private fun Double.formatOneDecimal(): String {
+    val scaled = (this * 10).toInt()
+    return "${scaled / 10}.${scaled % 10}"
 }
 
 private fun DeliveryStatus.label(): String {
@@ -662,6 +828,10 @@ private fun MessagePreview() {
         onBack = {},
         onSendClick = {},
         onDraftChanged = {},
+        onAttachFileClick = {},
+        onPickImageClick = {},
+        onRecordVoiceClick = {},
+        onRemoveAttachment = {},
         onLoadMoreMessages = {},
         onInviteUserClick = {},
     )
