@@ -2,9 +2,11 @@ package org.debs.kalog.core.crypto
 
 import dev.whyoleg.cryptography.BinarySize.Companion.bits
 import dev.whyoleg.cryptography.CryptographyProvider
+import dev.whyoleg.cryptography.DelicateCryptographyApi
 import dev.whyoleg.cryptography.algorithms.ChaCha20Poly1305
 import dev.whyoleg.cryptography.algorithms.RSA
 import dev.whyoleg.cryptography.algorithms.SHA256
+import dev.whyoleg.cryptography.random.CryptographyRandom
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.io.encoding.Base64
@@ -21,6 +23,10 @@ interface EncryptionService {
     suspend fun encrypt(message: String, publicKey: String): String
 
     suspend fun decrypt(message: String, privateKey: String): String
+
+    suspend fun encryptAttachment(bytes: ByteArray, key: String): ByteArray
+
+    suspend fun decryptAttachment(bytes: ByteArray, key: String): ByteArray
 
     suspend fun encryptToChunks(
         message: String,
@@ -62,6 +68,14 @@ class RsaOaepEncryptionService : EncryptionService {
         return RsaOaepCryptoManager.decrypt(message, privateKey)
     }
 
+    override suspend fun encryptAttachment(bytes: ByteArray, key: String): ByteArray {
+        return ChaCha20Poly1305CryptoManager.encrypt(bytes, key)
+    }
+
+    override suspend fun decryptAttachment(bytes: ByteArray, key: String): ByteArray {
+        return ChaCha20Poly1305CryptoManager.decrypt(bytes, key)
+    }
+
     override suspend fun encryptToChunks(
         message: String,
         publicKey: String,
@@ -77,20 +91,49 @@ class RsaOaepEncryptionService : EncryptionService {
 
 object ChaCha20Poly1305CryptoManager {
     private const val KEY_SIZE_BITS = 256
+    private const val NONCE_SIZE_BYTES = 12
     private const val ALGORITHM_LABEL = "ChaCha20-Poly1305"
 
     @OptIn(ExperimentalEncodingApi::class)
     suspend fun generateKey(): GeneratedAttachmentKey = withContext(Dispatchers.Default) {
-        val key = CryptographyProvider.Default
-            .get(ChaCha20Poly1305)
-            .keyGenerator()
-            .generateKey()
-
         GeneratedAttachmentKey(
-            key = Base64.encode(key.encodeToByteArrayBlocking(ChaCha20Poly1305.Key.Format.RAW)),
+            key = Base64.encode(CryptographyRandom.nextBytes(KEY_SIZE_BITS / 8)),
             sizeBits = KEY_SIZE_BITS,
             algorithmLabel = ALGORITHM_LABEL,
         )
+    }
+
+    @OptIn(DelicateCryptographyApi::class, ExperimentalEncodingApi::class)
+    suspend fun encrypt(bytes: ByteArray, serializedKey: String): ByteArray = withContext(Dispatchers.Default) {
+        val nonce = CryptographyRandom.nextBytes(NONCE_SIZE_BYTES)
+        val encryptedBytes = decodeKey(serializedKey)
+            .cipher()
+            .encryptWithIv(nonce, bytes, byteArrayOf())
+
+        nonce + encryptedBytes
+    }
+
+    @OptIn(DelicateCryptographyApi::class, ExperimentalEncodingApi::class)
+    suspend fun decrypt(bytes: ByteArray, serializedKey: String): ByteArray = withContext(Dispatchers.Default) {
+        require(bytes.size > NONCE_SIZE_BYTES) { "Encrypted attachment payload is missing nonce or ciphertext." }
+
+        val nonce = bytes.copyOfRange(0, NONCE_SIZE_BYTES)
+        val encryptedBytes = bytes.copyOfRange(NONCE_SIZE_BYTES, bytes.size)
+        decodeKey(serializedKey)
+            .cipher()
+            .decryptWithIv(nonce, encryptedBytes, byteArrayOf())
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    private suspend fun decodeKey(serializedKey: String): ChaCha20Poly1305.Key = withContext(Dispatchers.Default) {
+        val rawKey = Base64.decode(serializedKey)
+        require(rawKey.size == KEY_SIZE_BITS / 8) {
+            "ChaCha20-Poly1305 attachment key must be ${KEY_SIZE_BITS / 8} bytes, got ${rawKey.size}."
+        }
+        CryptographyProvider.Default
+            .get(ChaCha20Poly1305)
+            .keyDecoder()
+            .decodeFromByteArray(ChaCha20Poly1305.Key.Format.RAW, rawKey)
     }
 }
 

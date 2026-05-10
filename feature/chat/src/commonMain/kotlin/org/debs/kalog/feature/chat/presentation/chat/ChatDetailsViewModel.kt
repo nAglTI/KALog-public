@@ -42,6 +42,7 @@ class ChatDetailsViewModel(
     private var loadMoreMessagesJob: Job? = null
     private var inviteUserJob: Job? = null
     private var invitationJob: Job? = null
+    private var queuedAttachmentDrafts: List<ChatAttachment> = emptyList()
 
     init {
         openChat()
@@ -58,6 +59,7 @@ class ChatDetailsViewModel(
             ChatDetailsEvent.PickImageClicked -> notifyAttachmentPickerPending(PICK_IMAGE_PENDING)
             ChatDetailsEvent.RecordVoiceClicked -> notifyAttachmentPickerPending(RECORD_VOICE_PENDING)
             is ChatDetailsEvent.AttachmentDraftSelected -> prepareAttachment(event.attachment)
+            is ChatDetailsEvent.AttachmentDraftsSelected -> prepareAttachments(event.attachments)
             is ChatDetailsEvent.RemoveAttachmentDraft -> removeAttachment(event.attachmentId)
             ChatDetailsEvent.LoadMoreMessagesClicked -> loadMoreMessages()
             is ChatDetailsEvent.InviteUserConfirmed -> inviteUserToChat(event.userId)
@@ -103,11 +105,28 @@ class ChatDetailsViewModel(
         val draft = state.value.draft
         val attachments = state.value.pendingAttachments
         if ((draft.isBlank() && attachments.isEmpty()) || sendMessageJob?.isActive == true) return
+        if (state.value.isPreparingAttachment) {
+            viewModelScope.launch {
+                _effect.emit(ChatDetailsEffect.ShowMessage(WAIT_ATTACHMENTS_UPLOAD))
+            }
+            return
+        }
 
         sendMessageJob = viewModelScope.launch {
             _state.update { it.copy(isSendingMessage = true) }
             try {
-                val wasSent = sendChatMessageUseCase(chatId, draft, attachments)
+                val attachmentBatches = attachments.chunked(MAX_ATTACHMENTS_PER_MESSAGE)
+                val wasSent = if (attachmentBatches.isEmpty()) {
+                    sendChatMessageUseCase(chatId, draft, emptyList())
+                } else {
+                    attachmentBatches.mapIndexed { index, batch ->
+                        sendChatMessageUseCase(
+                            chatId = chatId,
+                            plainText = if (index == 0) draft else "",
+                            attachments = batch,
+                        )
+                    }.any { sent -> sent }
+                }
                 if (wasSent) {
                     _state.update { it.copy(draft = "", pendingAttachments = emptyList()) }
                 }
@@ -128,24 +147,85 @@ class ChatDetailsViewModel(
     }
 
     private fun prepareAttachment(attachment: ChatAttachment) {
-        if (state.value.isPreparingAttachment || state.value.isPendingInvitation || prepareAttachmentJob?.isActive == true) return
+        prepareAttachments(listOf(attachment))
+    }
+
+    private fun prepareAttachments(attachments: List<ChatAttachment>) {
+        val attachmentsToPrepare = attachments.filter { attachment ->
+            attachment.id.isNotBlank() && attachment.name.isNotBlank()
+        }
+        if (attachmentsToPrepare.isEmpty()) return
+        if (state.value.isPendingInvitation) return
+        if (state.value.isPreparingAttachment || prepareAttachmentJob?.isActive == true) {
+            queuedAttachmentDrafts = (queuedAttachmentDrafts + attachmentsToPrepare)
+                .distinctBy { attachment -> attachment.id }
+            return
+        }
 
         prepareAttachmentJob = viewModelScope.launch {
             _state.update { it.copy(isPreparingAttachment = true) }
+            var failedAttachmentCount = 0
+            var firstFailureMessage: String? = null
             try {
-                val prepared = prepareChatAttachmentUseCase(chatId, attachment)
-                _state.update { current ->
-                    current.copy(
-                        pendingAttachments = (current.pendingAttachments + prepared)
-                            .distinctBy { draft -> draft.attachment.id },
-                    )
+                attachmentsToPrepare.forEach { attachment ->
+                    try {
+                        _state.update {
+                            it.copy(
+                                attachmentUploadProgress = AttachmentUploadProgress(
+                                    fileName = attachment.name,
+                                    bytesSent = 0L,
+                                    totalBytes = attachment.contentBytes?.size?.toLong() ?: attachment.sizeBytes ?: 0L,
+                                ),
+                            )
+                        }
+                        val prepared = prepareChatAttachmentUseCase(chatId, attachment) { bytesSent, totalBytes ->
+                            _state.update {
+                                it.copy(
+                                    attachmentUploadProgress = AttachmentUploadProgress(
+                                        fileName = attachment.name,
+                                        bytesSent = bytesSent,
+                                        totalBytes = totalBytes,
+                                    ),
+                                )
+                            }
+                        }
+                        _state.update { current ->
+                            current.copy(
+                                pendingAttachments = (current.pendingAttachments + prepared)
+                                    .distinctBy { draft -> draft.attachment.id },
+                            )
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        failedAttachmentCount += 1
+                        if (firstFailureMessage == null) {
+                            firstFailureMessage = error.message?.takeIf(String::isNotBlank)
+                                ?: error::class.simpleName
+                                ?: "unknown error"
+                        }
+                    }
+                }
+                if (failedAttachmentCount > 0) {
+                    val message = firstFailureMessage?.let { reason ->
+                        "$PREPARE_ATTACHMENT_ERROR $reason"
+                    } ?: PREPARE_ATTACHMENT_ERROR
+                    _effect.emit(ChatDetailsEffect.ShowError(message))
                 }
             } catch (error: CancellationException) {
                 throw error
-            } catch (_: Throwable) {
-                _effect.emit(ChatDetailsEffect.ShowError(PREPARE_ATTACHMENT_ERROR))
             } finally {
-                _state.update { it.copy(isPreparingAttachment = false) }
+                _state.update {
+                    it.copy(
+                        isPreparingAttachment = false,
+                        attachmentUploadProgress = null,
+                    )
+                }
+                val queuedDrafts = queuedAttachmentDrafts
+                queuedAttachmentDrafts = emptyList()
+                if (queuedDrafts.isNotEmpty()) {
+                    prepareAttachments(queuedDrafts)
+                }
             }
         }
     }
@@ -231,10 +311,12 @@ class ChatDetailsViewModel(
     }
 
     private companion object {
+        private const val MAX_ATTACHMENTS_PER_MESSAGE = 10
         private const val SEND_MESSAGE_ERROR = "Couldn't encrypt or send the message. Nothing was sent."
-        private const val PREPARE_ATTACHMENT_ERROR = "Couldn't prepare the attachment encryption key."
-        private const val ATTACH_FILE_PENDING = "File sending is prepared locally. Backend upload contract is still pending."
-        private const val PICK_IMAGE_PENDING = "Gallery images are prepared locally. Backend upload contract is still pending."
-        private const val RECORD_VOICE_PENDING = "Voice recording is prepared locally. Backend upload contract is still pending."
+        private const val PREPARE_ATTACHMENT_ERROR = "Couldn't prepare or upload one or more attachments."
+        private const val WAIT_ATTACHMENTS_UPLOAD = "Wait until attachments finish uploading."
+        private const val ATTACH_FILE_PENDING = "File picker is unavailable on this platform or was cancelled."
+        private const val PICK_IMAGE_PENDING = "Image picker is unavailable on this platform or was cancelled."
+        private const val RECORD_VOICE_PENDING = "Voice recording needs a native recorder on this platform."
     }
 }

@@ -18,3 +18,4 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
+core/network/src/commonMain/kotlin/org/debs/kalog/core/network/config/NetworkConfig.kt

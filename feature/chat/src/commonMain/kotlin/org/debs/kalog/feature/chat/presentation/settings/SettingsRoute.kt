@@ -66,5 +66,10 @@ fun SettingsRoute(
         onCopyUserIdClick = { viewModel.onEvent(SettingsEvent.CopyUserIdClicked) },
         onClearDataClick = { isClearDataDialogVisible = true },
         onDebugModeToggle = { viewModel.onEvent(SettingsEvent.DebugModeToggled(it)) },
+        onClearMediaCacheClick = { viewModel.onEvent(SettingsEvent.ClearMediaCacheClicked) },
+        onMediaCacheRetentionDaysChange = {
+            viewModel.onEvent(SettingsEvent.MediaCacheRetentionDaysChanged(it))
+        },
+        onClearOldMediaCacheClick = { viewModel.onEvent(SettingsEvent.ClearOldMediaCacheClicked) },
     )
 }

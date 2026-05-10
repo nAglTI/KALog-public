@@ -43,6 +43,12 @@ data class SetGroupChatPublicKeyRequestDto(
 )
 
 @Serializable
+data class InitAttachmentResponseDto(
+    @SerialName("aid") val attachmentId: String,
+    @SerialName("upload_token") val uploadToken: String,
+)
+
+@Serializable
 data class ChatResponseDto(
     @SerialName("id") val id: String,
     @SerialName("title") val title: String,

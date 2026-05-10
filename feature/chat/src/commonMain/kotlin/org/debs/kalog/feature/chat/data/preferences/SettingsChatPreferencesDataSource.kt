@@ -76,6 +76,17 @@ class SettingsChatPreferencesDataSource(
         keyValueStorage.putString(DEBUG_MODE, if (enabled) "true" else "false")
     }
 
+    override suspend fun getMediaCacheRetentionDays(): Int {
+        return keyValueStorage.getStringOrNull(MEDIA_CACHE_RETENTION_DAYS)
+            ?.toIntOrNull()
+            ?.coerceAtLeast(0)
+            ?: DEFAULT_MEDIA_CACHE_RETENTION_DAYS
+    }
+
+    override suspend fun saveMediaCacheRetentionDays(days: Int) {
+        keyValueStorage.putString(MEDIA_CACHE_RETENTION_DAYS, days.coerceAtLeast(0).toString())
+    }
+
     private fun userNicknameKey(userId: String) = "$USER_NICKNAME_PREFIX$userId"
 
     private fun chatTitleKey(chatId: String) = "$CHAT_TITLE_PREFIX$chatId"
@@ -87,5 +98,7 @@ class SettingsChatPreferencesDataSource(
         private const val USER_NICKNAME_PREFIX = "user.nickname."
         private const val CHAT_TITLE_PREFIX = "chat.title."
         private const val DEBUG_MODE = "chat.debug_mode"
+        private const val MEDIA_CACHE_RETENTION_DAYS = "chat.media_cache.retention_days"
+        private const val DEFAULT_MEDIA_CACHE_RETENTION_DAYS = 7
     }
 }

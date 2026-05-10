@@ -16,6 +16,7 @@ data class ChatDetailsUiState(
     val messages: List<ChatMessage> = emptyList(),
     val draft: String = "",
     val pendingAttachments: List<PreparedChatAttachment> = emptyList(),
+    val attachmentUploadProgress: AttachmentUploadProgress? = null,
     val isSendingMessage: Boolean = false,
     val isPreparingAttachment: Boolean = false,
     val isInvitingUser: Boolean = false,
@@ -27,6 +28,7 @@ data class ChatDetailsUiState(
     val canSend: Boolean
         get() = (draft.isNotBlank() || pendingAttachments.isNotEmpty()) &&
             !isSendingMessage &&
+            !isPreparingAttachment &&
             invitationStatus != InvitationStatus.Pending
 
     val canInviteUsers: Boolean
@@ -35,6 +37,12 @@ data class ChatDetailsUiState(
     val isPendingInvitation: Boolean
         get() = invitationStatus == InvitationStatus.Pending
 }
+
+data class AttachmentUploadProgress(
+    val fileName: String,
+    val bytesSent: Long,
+    val totalBytes: Long,
+)
 
 sealed interface ChatDetailsEvent {
     data class DraftChanged(val value: String) : ChatDetailsEvent
@@ -48,6 +56,8 @@ sealed interface ChatDetailsEvent {
     data object RecordVoiceClicked : ChatDetailsEvent
 
     data class AttachmentDraftSelected(val attachment: ChatAttachment) : ChatDetailsEvent
+
+    data class AttachmentDraftsSelected(val attachments: List<ChatAttachment>) : ChatDetailsEvent
 
     data class RemoveAttachmentDraft(val attachmentId: String) : ChatDetailsEvent
 

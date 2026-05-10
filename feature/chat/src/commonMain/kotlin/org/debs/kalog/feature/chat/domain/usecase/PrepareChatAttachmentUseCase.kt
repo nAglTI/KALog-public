@@ -7,10 +7,14 @@ import org.debs.kalog.feature.chat.domain.repository.ChatRepository
 class PrepareChatAttachmentUseCase(
     private val repository: ChatRepository,
 ) {
-    suspend operator fun invoke(chatId: String, attachment: ChatAttachment): PreparedChatAttachment {
+    suspend operator fun invoke(
+        chatId: String,
+        attachment: ChatAttachment,
+        onUploadProgress: (bytesSent: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): PreparedChatAttachment {
         require(attachment.id.isNotBlank()) { "Attachment id must not be blank." }
         require(attachment.name.isNotBlank()) { "Attachment name must not be blank." }
 
-        return repository.prepareAttachment(chatId, attachment)
+        return repository.prepareAttachment(chatId, attachment, onUploadProgress)
     }
 }

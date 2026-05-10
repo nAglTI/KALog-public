@@ -46,6 +46,9 @@ fun SettingsScreen(
     onCopyUserIdClick: () -> Unit,
     onClearDataClick: () -> Unit,
     onDebugModeToggle: (Boolean) -> Unit,
+    onClearMediaCacheClick: () -> Unit,
+    onMediaCacheRetentionDaysChange: (String) -> Unit,
+    onClearOldMediaCacheClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -85,6 +88,15 @@ fun SettingsScreen(
             SettingsDebugSection(
                 debugMode = state.debugMode,
                 onToggle = onDebugModeToggle,
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            SettingsMediaCacheSection(
+                retentionDays = state.mediaCacheRetentionDays,
+                isClearing = state.isClearingMediaCache,
+                message = state.mediaCacheMessage,
+                onRetentionDaysChange = onMediaCacheRetentionDaysChange,
+                onClearAllClick = onClearMediaCacheClick,
+                onClearOldClick = onClearOldMediaCacheClick,
             )
             Spacer(modifier = Modifier.height(32.dp))
             SettingsWipeSection(
@@ -301,6 +313,86 @@ private fun SettingsDebugSection(
                 checked = debugMode,
                 onCheckedChange = onToggle,
             )
+        }
+    }
+}
+
+@Composable
+private fun SettingsMediaCacheSection(
+    retentionDays: String,
+    isClearing: Boolean,
+    message: String?,
+    onRetentionDaysChange: (String) -> Unit,
+    onClearAllClick: () -> Unit,
+    onClearOldClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = Color.White.copy(alpha = 0.94f),
+        tonalElevation = 2.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Cached media",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = "Decrypted files are stored locally for fast previews.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = retentionDays,
+                onValueChange = onRetentionDaysChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Clear files older than days") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = onClearOldClick,
+                    enabled = !isClearing && retentionDays.isNotBlank(),
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Text("Clear old")
+                }
+                Button(
+                    onClick = onClearAllClick,
+                    enabled = !isClearing,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    Text("Clear now")
+                }
+            }
+            if (message != null) {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

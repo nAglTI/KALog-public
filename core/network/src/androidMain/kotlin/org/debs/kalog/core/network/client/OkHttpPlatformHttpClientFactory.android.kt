@@ -8,6 +8,7 @@ import org.debs.kalog.core.network.config.NetworkConfig
 import okhttp3.Dns
 import java.net.InetAddress
 import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
 
 class OkHttpPlatformHttpClientFactory(
     private val networkConfig: NetworkConfig,
@@ -17,10 +18,18 @@ class OkHttpPlatformHttpClientFactory(
             engine {
                 config {
                     dns(AndroidFallbackDns(networkConfig.dnsFallbackHosts))
+                    connectTimeout(networkConfig.connectTimeoutMillis, TimeUnit.MILLISECONDS)
+                    readTimeout(LONG_TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    writeTimeout(LONG_TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    callTimeout(0L, TimeUnit.MILLISECONDS)
                 }
             }
             config(this)
         }
+    }
+
+    private companion object {
+        private const val LONG_TRANSFER_TIMEOUT_MS = 60 * 60 * 1000L
     }
 }
 

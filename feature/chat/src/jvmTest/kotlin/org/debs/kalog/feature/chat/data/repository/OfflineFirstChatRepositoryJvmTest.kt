@@ -9,7 +9,9 @@ import kotlinx.coroutines.withTimeout
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.crypto.GeneratedKeyPair
 import org.debs.kalog.core.crypto.GeneratedAttachmentKey
-import org.debs.kalog.feature.chat.data.crypto.AttachmentEncryptionKey
+import org.debs.kalog.feature.chat.data.cache.CachedChatAttachment
+import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
+import org.debs.kalog.feature.chat.data.cache.NoOpChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
 import org.debs.kalog.feature.chat.data.crypto.ChatParticipantKey
@@ -1220,7 +1222,7 @@ class OfflineFirstChatRepositoryJvmTest {
     }
 
     @Test
-    fun prepareAttachment_generatesAndStoresChaCha20Poly1305Key() = runBlocking {
+    fun prepareAttachment_generatesChaCha20Poly1305KeyForMessagePayload() = runBlocking {
         val chatId = "chat-1"
         val keyStore = FakeChatKeyStore()
         val remoteDataSource = FakeChatRemoteDataSource(
@@ -1276,8 +1278,6 @@ class OfflineFirstChatRepositoryJvmTest {
             ),
         )
 
-        val storedKey = checkNotNull(keyStore.attachmentEncryptionKey(chatId, "attachment-1"))
-        val secondStoredKey = checkNotNull(keyStore.attachmentEncryptionKey(chatId, "attachment-2"))
         assertEquals("attachment-1", preparedImage.attachment.encryptionKeyId)
         assertEquals("attachment-1", preparedImage.encryption.uuid)
         assertEquals("chacha20-poly1305-key-1", preparedImage.encryption.key)
@@ -1286,19 +1286,213 @@ class OfflineFirstChatRepositoryJvmTest {
         assertEquals("attachment-2", preparedVoice.attachment.encryptionKeyId)
         assertEquals("attachment-2", preparedVoice.encryption.uuid)
         assertEquals("chacha20-poly1305-key-2", preparedVoice.encryption.key)
-        assertEquals("ChaCha20-Poly1305", storedKey.algorithm)
-        assertEquals(256, storedKey.sizeBits)
-        assertEquals("chacha20-poly1305-key-1", storedKey.key)
-        assertEquals("chacha20-poly1305-key-2", secondStoredKey.key)
-
-        keyStore.clearChatState(chatId)
-
-        assertEquals(null, keyStore.attachmentEncryptionKey(chatId, "attachment-1"))
-        assertEquals(null, keyStore.attachmentEncryptionKey(chatId, "attachment-2"))
+        assertEquals("ChaCha20-Poly1305", preparedVoice.encryption.algorithm)
+        assertEquals(256, preparedVoice.encryption.sizeBits)
     }
 
     @Test
-    fun sendMessage_includesPreparedAttachmentUuidAndKeyInsideEncryptedPayload() = runBlocking {
+    fun prepareAttachment_uploadsEncryptedBytesWhenContentIsAvailable() = runBlocking {
+        val chatId = "chat-1"
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(remoteDataSource = remoteDataSource)
+
+        val prepared = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "local-file-id",
+                kind = ChatAttachmentKind.File,
+                name = "report.pdf",
+                mimeType = "application/pdf",
+                sizeBytes = 11,
+                contentBytes = "hello world".encodeToByteArray(),
+            ),
+        )
+
+        assertEquals("attachment-1", prepared.attachment.id)
+        assertEquals(null, prepared.attachment.contentBytes)
+        assertEquals(1, remoteDataSource.uploadedAttachments.size)
+        val upload = remoteDataSource.uploadedAttachments.single()
+        assertEquals("attachment-1", upload.attachmentId)
+        assertEquals("upload-token-attachment-1", upload.uploadToken)
+        assertEquals("application/pdf", upload.contentType)
+        assertEquals(
+            "encrypted-with-chacha20-poly1305-key-1:hello world",
+            upload.bytes.decodeToString(),
+        )
+    }
+
+    @Test
+    fun prepareAttachment_uploadsLargeLocalFileAsEncryptedChunks() = runBlocking {
+        val chatId = "chat-1"
+        val chunkSizeBytes = 16 * 1024 * 1024
+        val sourceBytes = ByteArray(chunkSizeBytes + 5) { index -> (index % 251).toByte() }
+        val attachmentFileCache = FakeChatAttachmentFileCache()
+        val sourceFile = attachmentFileCache.put(
+            attachmentId = "local-source",
+            fileName = "big.bin",
+            mimeType = "application/octet-stream",
+            bytes = sourceBytes,
+        )
+        val encryptionService = FakeEncryptionService(
+            generatedKeyPair = GeneratedKeyPair(
+                publicKey = "public-key",
+                privateKey = "private-key",
+            ),
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            encryptionService = encryptionService,
+            attachmentFileCache = attachmentFileCache,
+        )
+
+        val prepared = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "local-file-id",
+                kind = ChatAttachmentKind.File,
+                name = "big.bin",
+                mimeType = "application/octet-stream",
+                sizeBytes = sourceBytes.size.toLong(),
+                localUri = sourceFile.localUri,
+                contentBytes = null,
+            ),
+        )
+
+        assertEquals("attachment-1", prepared.attachment.id)
+        assertEquals(listOf("attachment-1", "attachment-2"), prepared.attachment.parts.map { it.id })
+        assertEquals(listOf(null, null), prepared.attachment.parts.map { it.key })
+        assertEquals(2, remoteDataSource.uploadedAttachments.size)
+        assertEquals(
+            chunkSizeBytes,
+            encryptionService.decryptAttachment(
+                remoteDataSource.uploadedAttachments[0].bytes,
+                "chacha20-poly1305-key-1",
+            ).size,
+        )
+        assertEquals(
+            5,
+            encryptionService.decryptAttachment(
+                remoteDataSource.uploadedAttachments[1].bytes,
+                "chacha20-poly1305-key-1",
+            ).size,
+        )
+    }
+
+    @Test
+    fun sendMessage_usesCompactPartIdsForChunkedAttachmentMetadata() = runBlocking {
+        val chatId = "chat-1"
+        val chunkSizeBytes = 16 * 1024 * 1024
+        val sourceBytes = ByteArray(chunkSizeBytes + 1) { index -> (index % 127).toByte() }
+        val attachmentFileCache = FakeChatAttachmentFileCache()
+        val sourceFile = attachmentFileCache.put(
+            attachmentId = "local-source",
+            fileName = "big.bin",
+            mimeType = "application/octet-stream",
+            bytes = sourceBytes,
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            attachmentFileCache = attachmentFileCache,
+        )
+        val prepared = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "local-file-id",
+                kind = ChatAttachmentKind.File,
+                name = "big.bin",
+                mimeType = "application/octet-stream",
+                sizeBytes = sourceBytes.size.toLong(),
+                localUri = sourceFile.localUri,
+            ),
+        )
+
+        repository.sendMessage(chatId, "big", listOf(prepared))
+
+        remoteDataSource.lastSentPayloads.forEach { payload ->
+            val messagePayload = payload.chunks.single()
+            assertTrue(messagePayload.contains(""""partIds":["attachment-1","attachment-2"]"""))
+            assertTrue(!messagePayload.contains(""""parts""""))
+            assertTrue(!messagePayload.contains(""""index""""))
+        }
+    }
+
+    @Test
+    fun sendMessage_includesPreparedAttachmentIdTypeAndKeyInsideEncryptedPayload() = runBlocking {
         val chatId = "chat-1"
         val remoteDataSource = FakeChatRemoteDataSource(
             startSession = RemoteStartSession(
@@ -1350,10 +1544,235 @@ class OfflineFirstChatRepositoryJvmTest {
         assertEquals(setOf("user-1", "user-2"), payloads.map(RemoteSendPayload::recipientId).toSet())
         payloads.forEach { payload ->
             assertEquals(
-                """{"message":"hello","attachments":[{"uuid":"image-uuid","key":"chacha20-poly1305-key-1"},{"uuid":"file-uuid","key":"chacha20-poly1305-key-2"}]}""",
+                """{"messageText":"hello","attachments":[{"id":"attachment-1","type":"photo","key":"chacha20-poly1305-key-1","name":"image.jpg"},{"id":"attachment-2","type":"file","key":"chacha20-poly1305-key-2","name":"report.pdf"}]}""",
                 payload.chunks.single(),
             )
         }
+    }
+
+    @Test
+    fun sendMessage_keepsAudioFilesAndVoiceMessagesAsDifferentAttachmentTypes() = runBlocking {
+        val chatId = "chat-1"
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(remoteDataSource = remoteDataSource)
+        val audioAttachment = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "audio-uuid",
+                kind = ChatAttachmentKind.Audio,
+                name = "song.mp3",
+                mimeType = "audio/mpeg",
+            ),
+        )
+        val voiceAttachment = repository.prepareAttachment(
+            chatId = chatId,
+            attachment = ChatAttachment(
+                id = "voice-uuid",
+                kind = ChatAttachmentKind.Voice,
+                name = "voice.m4a",
+                mimeType = "audio/mp4",
+            ),
+        )
+
+        repository.sendMessage(chatId, "", listOf(audioAttachment, voiceAttachment))
+
+        remoteDataSource.lastSentPayloads.forEach { payload ->
+            val messagePayload = payload.chunks.single()
+            assertTrue(messagePayload.contains("\"type\":\"audio\""))
+            assertTrue(messagePayload.contains("\"type\":\"voice\""))
+        }
+    }
+
+    @Test
+    fun openChat_downloadsDecryptsAndCachesIncomingImageAttachments() = runBlocking {
+        val chatId = "chat-1"
+        val attachmentKey = "chacha20-poly1305-key-1"
+        val attachmentPayload =
+            """{"messageText":"photo","attachments":[{"id":"attachment-1","type":"photo","key":"$attachmentKey"}]}"""
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = listOf(
+                        remoteMessage(
+                            chatId = chatId,
+                            index = 1,
+                            fromUserId = "user-2",
+                            toUserId = "user-1",
+                            createdAt = messageTimestamp(1),
+                        ).copy(chunks = listOf(attachmentPayload)),
+                    ),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        remoteDataSource.uploadAttachment(
+            attachmentId = "attachment-1",
+            uploadToken = "seed",
+            bytes = "encrypted-with-$attachmentKey:image-bytes".encodeToByteArray(),
+            contentType = "image/png",
+        )
+        val attachmentFileCache = FakeChatAttachmentFileCache()
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            attachmentFileCache = attachmentFileCache,
+        )
+
+        repository.openChat(chatId)
+
+        val message = repository.observeChat(chatId)
+            .filterNotNull()
+            .first()
+            .messages
+            .filterIsInstance<ChatMessage.User>()
+            .single()
+        val attachment = message.attachments.single()
+        assertEquals("photo", message.body)
+        assertEquals(ChatAttachmentKind.Image, attachment.kind)
+        assertEquals("attachment-1", attachment.id)
+        assertEquals(null, attachment.contentBytes)
+        assertEquals(null, attachment.localUri)
+
+        val cachedAttachment = withTimeout(1_000) {
+            repository.observeChat(chatId)
+                .filterNotNull()
+                .map { thread ->
+                    thread.messages
+                        .filterIsInstance<ChatMessage.User>()
+                        .single()
+                        .attachments
+                        .single()
+                }
+                .first { loadedAttachment ->
+                    loadedAttachment.contentBytes?.decodeToString() == "image-bytes" &&
+                        loadedAttachment.localUri?.isNotBlank() == true
+                }
+        }
+        assertEquals("image-bytes", cachedAttachment.contentBytes?.decodeToString())
+        assertTrue(cachedAttachment.localUri?.isNotBlank() == true)
+    }
+
+    @Test
+    fun openChat_downloadsDecryptsAndAssemblesChunkedIncomingAttachments() = runBlocking {
+        val chatId = "chat-1"
+        val attachmentPayload =
+            """{"messageText":"file","attachments":[{"id":"attachment-1","type":"file","key":"chacha20-poly1305-key-1","name":"big.bin","mimeType":"application/octet-stream","size":11,"chunkSize":6,"parts":[{"id":"attachment-1","index":0,"size":6,"key":"chacha20-poly1305-key-1"},{"id":"attachment-2","index":1,"size":5,"key":"chacha20-poly1305-key-2"}]}]}"""
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = listOf(
+                        remoteMessage(
+                            chatId = chatId,
+                            index = 1,
+                            fromUserId = "user-2",
+                            toUserId = "user-1",
+                            createdAt = messageTimestamp(1),
+                        ).copy(chunks = listOf(attachmentPayload)),
+                    ),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        remoteDataSource.uploadAttachment(
+            attachmentId = "attachment-1",
+            uploadToken = "seed-1",
+            bytes = "encrypted-with-chacha20-poly1305-key-1:hello ".encodeToByteArray(),
+            contentType = "application/octet-stream",
+        )
+        remoteDataSource.uploadAttachment(
+            attachmentId = "attachment-2",
+            uploadToken = "seed-2",
+            bytes = "encrypted-with-chacha20-poly1305-key-2:world".encodeToByteArray(),
+            contentType = "application/octet-stream",
+        )
+        val attachmentFileCache = FakeChatAttachmentFileCache()
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            attachmentFileCache = attachmentFileCache,
+        )
+
+        repository.openChat(chatId)
+
+        val cachedAttachment = withTimeout(1_000) {
+            repository.observeChat(chatId)
+                .filterNotNull()
+                .map { thread ->
+                    thread.messages
+                        .filterIsInstance<ChatMessage.User>()
+                        .single()
+                        .attachments
+                        .single()
+                }
+                .first { loadedAttachment ->
+                    loadedAttachment.localUri?.let { localUri ->
+                        localUri.isNotBlank() &&
+                            attachmentFileCache.readBytes(localUri)?.decodeToString() == "hello world"
+                    } == true
+                }
+        }
+        assertEquals("big.bin", cachedAttachment.name)
+        assertEquals(2, cachedAttachment.parts.size)
+        assertTrue(cachedAttachment.localUri?.isNotBlank() == true)
     }
 
     @Test
@@ -2274,6 +2693,7 @@ private class FakeChatRemoteDataSource(
     private var getChatsFailuresRemaining: Int = 0,
     private val createDirectChatResponse: RemoteChatCreated? = null,
     private val createGroupChatResponse: RemoteChatCreated? = null,
+    private val attachmentUploadIds: MutableList<String> = mutableListOf(),
 ) : ChatRemoteDataSource {
     var startCalls: Int = 0
         private set
@@ -2295,6 +2715,8 @@ private class FakeChatRemoteDataSource(
     var lastCreateGroupChatPublicKey: String? = null
         private set
     val setGroupChatPublicKeyCalls = mutableListOf<Pair<String, String>>()
+    val initAttachmentUploadCalls = mutableListOf<String>()
+    val uploadedAttachments = mutableListOf<UploadedAttachment>()
 
     private var pollIndex: Int = 0
     private val mutableChats = chats.toMutableList()
@@ -2404,7 +2826,47 @@ private class FakeChatRemoteDataSource(
             },
         )
     }
+
+    override suspend fun initAttachmentUpload(): RemoteAttachmentUploadReservation {
+        val attachmentId = if (attachmentUploadIds.isNotEmpty()) {
+            attachmentUploadIds.removeAt(0)
+        } else {
+            "attachment-${initAttachmentUploadCalls.size + 1}"
+        }
+        initAttachmentUploadCalls += attachmentId
+        return RemoteAttachmentUploadReservation(
+            attachmentId = attachmentId,
+            uploadToken = "upload-token-$attachmentId",
+        )
+    }
+
+    override suspend fun uploadAttachment(
+        attachmentId: String,
+        uploadToken: String,
+        bytes: ByteArray,
+        contentType: String?,
+        onProgress: (bytesSent: Long, totalBytes: Long) -> Unit,
+    ) {
+        onProgress(bytes.size.toLong(), bytes.size.toLong())
+        uploadedAttachments += UploadedAttachment(
+            attachmentId = attachmentId,
+            uploadToken = uploadToken,
+            bytes = bytes,
+            contentType = contentType,
+        )
+    }
+
+    override suspend fun downloadAttachment(attachmentId: String, rangeHeader: String?): ByteArray {
+        return uploadedAttachments.first { upload -> upload.attachmentId == attachmentId }.bytes
+    }
 }
+
+private data class UploadedAttachment(
+    val attachmentId: String,
+    val uploadToken: String,
+    val bytes: ByteArray,
+    val contentType: String?,
+)
 
 private class FakeChatKeyStore(
     private var currentUserId: String? = null,
@@ -2415,7 +2877,6 @@ private class FakeChatKeyStore(
     private val participantsByChatId = mutableMapOf<String, List<ChatParticipantKey>>()
     private val chatPublicKeys = mutableMapOf<String, String>()
     private val chatPrivateKeys = mutableMapOf<String, String>()
-    private val attachmentKeys = mutableMapOf<Pair<String, String>, AttachmentEncryptionKey>()
 
     override suspend fun currentUserId(): String? = currentUserId
 
@@ -2448,14 +2909,6 @@ private class FakeChatKeyStore(
         chatPrivateKeys[chatId] = privateKey
     }
 
-    override suspend fun attachmentEncryptionKey(chatId: String, attachmentId: String): AttachmentEncryptionKey? {
-        return attachmentKeys[chatId to attachmentId]
-    }
-
-    override suspend fun saveAttachmentEncryptionKey(chatId: String, key: AttachmentEncryptionKey) {
-        attachmentKeys[chatId to key.id] = key.copy(chatId = chatId)
-    }
-
     override suspend fun participantsFor(chatId: String): List<ChatParticipantKey> {
         return participantsByChatId[chatId].orEmpty()
     }
@@ -2468,7 +2921,6 @@ private class FakeChatKeyStore(
         participantsByChatId.remove(chatId)
         chatPublicKeys.remove(chatId)
         chatPrivateKeys.remove(chatId)
-        attachmentKeys.keys.removeAll { (keyChatId, _) -> keyChatId == chatId }
     }
 
     override suspend fun clearAll() {
@@ -2479,7 +2931,6 @@ private class FakeChatKeyStore(
         participantsByChatId.clear()
         chatPublicKeys.clear()
         chatPrivateKeys.clear()
-        attachmentKeys.clear()
     }
 }
 
@@ -2513,6 +2964,19 @@ private class FakeEncryptionService(
 
     override suspend fun decrypt(message: String, privateKey: String): String = message
 
+    override suspend fun encryptAttachment(bytes: ByteArray, key: String): ByteArray {
+        return ("encrypted-with-$key:").encodeToByteArray() + bytes
+    }
+
+    override suspend fun decryptAttachment(bytes: ByteArray, key: String): ByteArray {
+        val prefix = "encrypted-with-$key:".encodeToByteArray()
+        return if (bytes.size >= prefix.size && bytes.copyOfRange(0, prefix.size).contentEquals(prefix)) {
+            bytes.copyOfRange(prefix.size, bytes.size)
+        } else {
+            bytes
+        }
+    }
+
     override suspend fun encryptToChunks(message: String, publicKey: String, chunkSizeBytes: Int): List<String> {
         require(publicKey.isNotBlank()) { "Public key must not be blank." }
         check(publicKey !in failingPublicKeys) { "Encryption failed." }
@@ -2536,6 +3000,7 @@ private class FakeChatPreferencesDataSource(
     private val userNicknames = initialUserNicknames.toMutableMap()
     private val chatTitles = mutableMapOf<String, String>()
     private var debugMode = false
+    private var mediaCacheRetentionDays = 7
 
     override fun observeLastOpenedChatId(): Flow<String?> = openedChatId.asStateFlow()
 
@@ -2601,6 +3066,78 @@ private class FakeChatPreferencesDataSource(
     override suspend fun setDebugModeEnabled(enabled: Boolean) {
         debugMode = enabled
     }
+
+    override suspend fun getMediaCacheRetentionDays(): Int {
+        return mediaCacheRetentionDays
+    }
+
+    override suspend fun saveMediaCacheRetentionDays(days: Int) {
+        mediaCacheRetentionDays = days
+    }
+}
+
+private class FakeChatAttachmentFileCache : ChatAttachmentFileCache {
+    private val cachedAttachments = mutableMapOf<String, CachedChatAttachment>()
+    private val cachedBytes = mutableMapOf<String, ByteArray>()
+
+    override suspend fun get(attachmentId: String): CachedChatAttachment? {
+        return cachedAttachments[attachmentId]
+    }
+
+    override suspend fun put(
+        attachmentId: String,
+        fileName: String?,
+        mimeType: String?,
+        bytes: ByteArray,
+    ): CachedChatAttachment {
+        val localUri = "memory://$attachmentId"
+        val cachedAttachment = CachedChatAttachment(
+            localUri = localUri,
+            sizeBytes = bytes.size.toLong(),
+        )
+        cachedAttachments[attachmentId] = cachedAttachment
+        cachedBytes[localUri] = bytes
+        return cachedAttachment
+    }
+
+    override suspend fun readBytes(localUri: String): ByteArray? {
+        return cachedBytes[localUri]
+    }
+
+    override suspend fun readBytes(localUri: String, offset: Long, length: Int): ByteArray? {
+        val bytes = cachedBytes[localUri] ?: return null
+        if (offset >= bytes.size) return ByteArray(0)
+        val startIndex = offset.toInt()
+        val endIndex = minOf(startIndex + length, bytes.size)
+        return bytes.copyOfRange(startIndex, endIndex)
+    }
+
+    override suspend fun putFromChunks(
+        attachmentId: String,
+        fileName: String?,
+        mimeType: String?,
+        chunks: suspend (suspend (ByteArray) -> Unit) -> Unit,
+    ): CachedChatAttachment {
+        val assembledBytes = mutableListOf<Byte>()
+        chunks { bytes -> assembledBytes += bytes.asIterable() }
+        return put(
+            attachmentId = attachmentId,
+            fileName = fileName,
+            mimeType = mimeType,
+            bytes = assembledBytes.toByteArray(),
+        )
+    }
+
+    override suspend fun clearAll(): Int {
+        val count = cachedAttachments.size
+        cachedAttachments.clear()
+        cachedBytes.clear()
+        return count
+    }
+
+    override suspend fun clearOlderThan(ageMillis: Long): Int {
+        return 0
+    }
 }
 
 private fun createRepository(
@@ -2614,6 +3151,7 @@ private fun createRepository(
         ),
     ),
     preferencesDataSource: FakeChatPreferencesDataSource = FakeChatPreferencesDataSource(),
+    attachmentFileCache: ChatAttachmentFileCache = NoOpChatAttachmentFileCache,
 ): OfflineFirstChatRepository {
     return OfflineFirstChatRepository(
         localDataSource = localDataSource,
@@ -2623,6 +3161,7 @@ private fun createRepository(
         encryptionService = encryptionService,
         chatPreferencesDataSource = preferencesDataSource,
         json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+        attachmentFileCache = attachmentFileCache,
     )
 }
 

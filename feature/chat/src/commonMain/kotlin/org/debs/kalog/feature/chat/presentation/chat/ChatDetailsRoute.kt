@@ -8,11 +8,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.launch
 import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 import org.debs.kalog.feature.chat.presentation.components.UuidInputDialog
+import org.debs.kalog.feature.chat.presentation.platform.VoiceRecordingResult
+import org.debs.kalog.feature.chat.presentation.platform.pickFileAttachment
+import org.debs.kalog.feature.chat.presentation.platform.pickImageAttachments
+import org.debs.kalog.feature.chat.presentation.platform.readClipboardAttachments
+import org.debs.kalog.feature.chat.presentation.platform.takePhotoAttachment
+import org.debs.kalog.feature.chat.presentation.platform.toggleVoiceRecording
 import org.koin.core.parameter.parametersOf
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -29,7 +37,9 @@ fun ChatDetailsRoute(
     val state by viewModel.state.collectAsState()
     var isInviteDialogVisible by rememberSaveable { mutableStateOf(false) }
     var invitedUserUuid by rememberSaveable { mutableStateOf("") }
+    var isRecordingVoice by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(viewModel) {
         viewModel.effect.collect { effect ->
@@ -88,13 +98,67 @@ fun ChatDetailsRoute(
             viewModel.onEvent(ChatDetailsEvent.SendClicked)
         },
         onAttachFileClick = {
-            viewModel.onEvent(ChatDetailsEvent.AttachFileClicked)
+            coroutineScope.launch {
+                val attachment = pickFileAttachment()
+                if (attachment != null) {
+                    viewModel.onEvent(ChatDetailsEvent.AttachmentDraftSelected(attachment))
+                } else {
+                    viewModel.onEvent(ChatDetailsEvent.AttachFileClicked)
+                }
+            }
         },
         onPickImageClick = {
-            viewModel.onEvent(ChatDetailsEvent.PickImageClicked)
+            coroutineScope.launch {
+                val attachments = pickImageAttachments()
+                if (attachments.isNotEmpty()) {
+                    viewModel.onEvent(ChatDetailsEvent.AttachmentDraftsSelected(attachments))
+                } else {
+                    viewModel.onEvent(ChatDetailsEvent.PickImageClicked)
+                }
+            }
+        },
+        onTakePhotoClick = {
+            coroutineScope.launch {
+                val attachment = takePhotoAttachment()
+                if (attachment != null) {
+                    viewModel.onEvent(ChatDetailsEvent.AttachmentDraftSelected(attachment))
+                } else {
+                    snackbarHostState.showSnackbar("Camera permission denied or cancelled.")
+                }
+            }
         },
         onRecordVoiceClick = {
-            viewModel.onEvent(ChatDetailsEvent.RecordVoiceClicked)
+            coroutineScope.launch {
+                when (val result = toggleVoiceRecording()) {
+                    VoiceRecordingResult.Started -> {
+                        isRecordingVoice = true
+                    }
+                    is VoiceRecordingResult.Finished -> {
+                        isRecordingVoice = false
+                        viewModel.onEvent(ChatDetailsEvent.AttachmentDraftSelected(result.attachment))
+                    }
+                    VoiceRecordingResult.PermissionDenied -> {
+                        isRecordingVoice = false
+                        snackbarHostState.showSnackbar("Microphone permission is required.")
+                    }
+                    VoiceRecordingResult.Unavailable -> {
+                        isRecordingVoice = false
+                        snackbarHostState.showSnackbar("Voice recording is unavailable.")
+                    }
+                }
+            }
+        },
+        onPasteClipboardAttachments = {
+            val attachments = readClipboardAttachments()
+            if (attachments.isNotEmpty()) {
+                viewModel.onEvent(ChatDetailsEvent.AttachmentDraftsSelected(attachments))
+                true
+            } else {
+                false
+            }
+        },
+        onAttachmentsDropped = { attachments ->
+            viewModel.onEvent(ChatDetailsEvent.AttachmentDraftsSelected(attachments))
         },
         onRemoveAttachment = { attachmentId ->
             viewModel.onEvent(ChatDetailsEvent.RemoveAttachmentDraft(attachmentId))
@@ -114,6 +178,7 @@ fun ChatDetailsRoute(
         onDeclineInvitation = {
             viewModel.onEvent(ChatDetailsEvent.DeclineInvitationClicked)
         },
+        isRecordingVoice = isRecordingVoice,
         snackbarHostState = snackbarHostState,
     )
 }

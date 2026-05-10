@@ -15,6 +15,10 @@ interface ChatRepository {
 
     suspend fun clearAllData()
 
+    suspend fun clearCachedAttachments(): Int
+
+    suspend fun clearCachedAttachmentsOlderThan(ageMillis: Long): Int
+
     fun observeChats(): Flow<List<ChatThread>>
 
     fun observeChat(chatId: String): Flow<ChatThread?>
@@ -31,7 +35,11 @@ interface ChatRepository {
         attachments: List<PreparedChatAttachment> = emptyList(),
     )
 
-    suspend fun prepareAttachment(chatId: String, attachment: ChatAttachment): PreparedChatAttachment
+    suspend fun prepareAttachment(
+        chatId: String,
+        attachment: ChatAttachment,
+        onUploadProgress: (bytesSent: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): PreparedChatAttachment
 
     suspend fun createDirectChat(targetUserId: String): String
 

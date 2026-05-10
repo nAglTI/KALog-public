@@ -45,6 +45,7 @@ android {
 
 dependencies {
     implementation(projects.composeApp)
+    implementation(projects.feature.chat)
     implementation(libs.androidx.activity.compose)
     implementation(libs.koin.android)
 

@@ -36,6 +36,18 @@ interface ChatRemoteDataSource {
     suspend fun leaveChat(chatId: String)
 
     suspend fun setGroupChatPublicKey(chatId: String, publicKey: String)
+
+    suspend fun initAttachmentUpload(): RemoteAttachmentUploadReservation
+
+    suspend fun uploadAttachment(
+        attachmentId: String,
+        uploadToken: String,
+        bytes: ByteArray,
+        contentType: String? = null,
+        onProgress: (bytesSent: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    )
+
+    suspend fun downloadAttachment(attachmentId: String, rangeHeader: String? = null): ByteArray
 }
 
 class KtorChatRemoteDataSource(
@@ -179,9 +191,7 @@ class KtorChatRemoteDataSource(
     }
 
     override suspend fun leaveGroupChat(chatId: String) {
-        chatApiService.leaveGroupChat(
-            LeaveGroupChatRequestDto(chatId = chatId),
-        )
+        leaveChat(chatId)
     }
 
     override suspend fun leaveChat(chatId: String) {
@@ -196,6 +206,37 @@ class KtorChatRemoteDataSource(
                 chatId = chatId,
                 publicKey = publicKey,
             ),
+        )
+    }
+
+    override suspend fun initAttachmentUpload(): RemoteAttachmentUploadReservation {
+        val response = chatApiService.initAttachmentUpload()
+        return RemoteAttachmentUploadReservation(
+            attachmentId = response.attachmentId,
+            uploadToken = response.uploadToken,
+        )
+    }
+
+    override suspend fun uploadAttachment(
+        attachmentId: String,
+        uploadToken: String,
+        bytes: ByteArray,
+        contentType: String?,
+        onProgress: (bytesSent: Long, totalBytes: Long) -> Unit,
+    ) {
+        chatApiService.uploadAttachment(
+            attachmentId = attachmentId,
+            uploadToken = uploadToken,
+            bytes = bytes,
+            contentType = contentType,
+            onProgress = onProgress,
+        )
+    }
+
+    override suspend fun downloadAttachment(attachmentId: String, rangeHeader: String?): ByteArray {
+        return chatApiService.downloadAttachment(
+            attachmentId = attachmentId,
+            rangeHeader = rangeHeader,
         )
     }
 }

@@ -23,10 +23,6 @@ interface ChatKeyStore {
 
     suspend fun saveChatKeyPair(chatId: String, publicKey: String, privateKey: String)
 
-    suspend fun attachmentEncryptionKey(chatId: String, attachmentId: String): AttachmentEncryptionKey?
-
-    suspend fun saveAttachmentEncryptionKey(chatId: String, key: AttachmentEncryptionKey)
-
     suspend fun participantsFor(chatId: String): List<ChatParticipantKey>
 
     suspend fun saveParticipants(chatId: String, participants: List<ChatParticipantKey>)
@@ -42,15 +38,6 @@ data class ChatParticipantKey(
     val displayName: String,
     val publicKey: String,
     val isCurrentUser: Boolean = false,
-)
-
-@Serializable
-data class AttachmentEncryptionKey(
-    val id: String,
-    val chatId: String,
-    val algorithm: String,
-    val sizeBits: Int,
-    val key: String,
 )
 
 data class EncryptedRecipientPayload(

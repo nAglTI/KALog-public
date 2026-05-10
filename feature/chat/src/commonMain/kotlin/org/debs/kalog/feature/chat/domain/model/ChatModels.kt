@@ -34,6 +34,8 @@ enum class InvitationStatus {
 enum class ChatAttachmentKind {
     File,
     Image,
+    Video,
+    Audio,
     Voice,
 }
 
@@ -44,18 +46,30 @@ data class ChatAttachment(
     val mimeType: String? = null,
     val sizeBytes: Long? = null,
     val localUri: String? = null,
+    val contentBytes: ByteArray? = null,
     val durationMillis: Long? = null,
     val encryptionKeyId: String? = null,
+    val decryptionKey: String? = null,
+    val parts: List<ChatAttachmentPart> = emptyList(),
 ) {
     val uuid: String
         get() = id
 }
+
+data class ChatAttachmentPart(
+    val id: String,
+    val index: Int,
+    val sizeBytes: Long? = null,
+    val key: String? = null,
+)
 
 data class ChatAttachmentEncryptionSpec(
     val uuid: String,
     val key: String,
     val algorithm: String,
     val sizeBits: Int,
+    val parts: List<ChatAttachmentPart> = emptyList(),
+    val chunkSizeBytes: Long? = null,
 )
 
 data class PreparedChatAttachment(

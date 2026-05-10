@@ -10,6 +10,10 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.content.OutgoingContent
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.core.readBytes
+import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -230,7 +234,7 @@ class ChatApiServiceJvmTest {
             responseBody = "{}",
         ) { request ->
             assertEquals(HttpMethod.Post, request.method)
-            assertEquals("/api/v1/chat/group/leave", request.url.encodedPath)
+            assertEquals("/api/v1/chat/leave", request.url.encodedPath)
             assertTrue(request.url.parameters.isEmpty())
 
             val requestJson = json.parseToJsonElement(request.encryptedEnvelope().data.single()).jsonObject
@@ -241,6 +245,68 @@ class ChatApiServiceJvmTest {
         service.leaveGroupChat(
             LeaveGroupChatRequestDto(chatId = "chat-1"),
         )
+    }
+
+    @Test
+    fun initAttachmentUpload_usesEncryptedBody() = runBlocking {
+        val service = createService(
+            responseBody = """
+                {"aid":"attachment-1","upload_token":"upload-token-1"}
+            """.trimIndent(),
+        ) { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("/api/v1/attachment/init", request.url.encodedPath)
+            assertTrue(request.url.parameters.isEmpty())
+
+            val envelope = request.encryptedEnvelope()
+            assertEquals("user-1", envelope.id)
+            assertEquals(buildJsonObject { }, json.parseToJsonElement(envelope.data.single()).jsonObject)
+        }
+
+        val response = service.initAttachmentUpload()
+
+        assertEquals("attachment-1", response.attachmentId)
+        assertEquals("upload-token-1", response.uploadToken)
+    }
+
+    @Test
+    fun uploadAttachment_usesPlainPutBinaryBodyWithUploadToken() = runBlocking {
+        val service = createService(
+            responseBody = "",
+            encryptResponse = false,
+        ) { request ->
+            assertEquals(HttpMethod.Put, request.method)
+            assertEquals("/api/v1/attachment/attachment-1", request.url.encodedPath)
+            assertEquals("upload-token-1", request.headers["X-Upload-Token"])
+            assertEquals("application/octet-stream", request.body.contentType?.toString())
+            assertEquals("encrypted-bytes", request.bodyBytes().decodeToString())
+        }
+
+        service.uploadAttachment(
+            attachmentId = "attachment-1",
+            uploadToken = "upload-token-1",
+            bytes = "encrypted-bytes".encodeToByteArray(),
+            contentType = "application/pdf",
+        )
+    }
+
+    @Test
+    fun downloadAttachment_usesPlainGetWithOptionalRange() = runBlocking {
+        val service = createService(
+            responseBody = "encrypted-range",
+            encryptResponse = false,
+        ) { request ->
+            assertEquals(HttpMethod.Get, request.method)
+            assertEquals("/api/v1/attachment/attachment-1", request.url.encodedPath)
+            assertEquals("bytes=0-1023", request.headers[HttpHeaders.Range])
+        }
+
+        val response = service.downloadAttachment(
+            attachmentId = "attachment-1",
+            rangeHeader = "bytes=0-1023",
+        )
+
+        assertEquals("encrypted-range", response.decodeToString())
     }
 
     @Test
@@ -349,13 +415,25 @@ private fun HttpRequestData.encryptedEnvelope(): SecureRequestEnvelope {
 }
 
 private fun HttpRequestData.bodyText(): String {
-    val bodyText = when (val body = body) {
-        is OutgoingContent.ByteArrayContent -> body.bytes().decodeToString()
+    return bodyBytes().decodeToString()
+}
+
+private fun HttpRequestData.bodyBytes(): ByteArray {
+    return when (val body = body) {
+        is OutgoingContent.ByteArrayContent -> body.bytes()
         is OutgoingContent.ReadChannelContent -> error("Unexpected read-channel body in test.")
-        is OutgoingContent.WriteChannelContent -> error("Unexpected write-channel body in test.")
+        is OutgoingContent.WriteChannelContent -> runBlocking {
+            val channel = ByteChannel(autoFlush = true)
+            val writer = launch {
+                body.writeTo(channel)
+                channel.close()
+            }
+            val bytes = channel.readRemaining().readBytes()
+            writer.join()
+            bytes
+        }
         is OutgoingContent.ContentWrapper -> error("Unexpected wrapped body in test.")
         is OutgoingContent.NoContent -> error("Expected JSON body but request was empty.")
         is OutgoingContent.ProtocolUpgrade -> error("Unexpected protocol upgrade body in test.")
     }
-    return bodyText
 }

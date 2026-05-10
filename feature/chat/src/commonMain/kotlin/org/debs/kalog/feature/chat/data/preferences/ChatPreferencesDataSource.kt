@@ -36,4 +36,8 @@ interface ChatPreferencesDataSource {
     suspend fun isDebugModeEnabled(): Boolean
 
     suspend fun setDebugModeEnabled(enabled: Boolean)
+
+    suspend fun getMediaCacheRetentionDays(): Int
+
+    suspend fun saveMediaCacheRetentionDays(days: Int)
 }

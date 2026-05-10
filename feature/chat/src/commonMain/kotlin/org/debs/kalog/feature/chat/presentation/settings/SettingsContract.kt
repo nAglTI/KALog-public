@@ -6,6 +6,9 @@ data class SettingsUiState(
     val currentUserId: String = "",
     val isClearingData: Boolean = false,
     val debugMode: Boolean = false,
+    val mediaCacheRetentionDays: String = "7",
+    val isClearingMediaCache: Boolean = false,
+    val mediaCacheMessage: String? = null,
     val nicknameSaved: Boolean = false,
     val nicknameSaveError: Boolean = false,
 ) {
@@ -23,6 +26,12 @@ sealed interface SettingsEvent {
     data object ClearAllDataConfirmed : SettingsEvent
 
     data class DebugModeToggled(val enabled: Boolean) : SettingsEvent
+
+    data object ClearMediaCacheClicked : SettingsEvent
+
+    data class MediaCacheRetentionDaysChanged(val days: String) : SettingsEvent
+
+    data object ClearOldMediaCacheClicked : SettingsEvent
 }
 
 sealed interface SettingsEffect {

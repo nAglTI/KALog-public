@@ -49,3 +49,8 @@ data class RemotePolledMessages(
     val messages: List<RemoteMessage>,
     val timestamp: String,
 )
+
+data class RemoteAttachmentUploadReservation(
+    val attachmentId: String,
+    val uploadToken: String,
+)

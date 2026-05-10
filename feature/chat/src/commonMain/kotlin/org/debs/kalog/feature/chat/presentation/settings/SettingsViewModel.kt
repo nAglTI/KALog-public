@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.domain.usecase.BroadcastNicknameUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
+import org.debs.kalog.feature.chat.domain.usecase.ClearCachedChatAttachmentsUseCase
+import org.debs.kalog.feature.chat.domain.usecase.ClearOldCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
 
 class SettingsViewModel(
@@ -20,6 +22,8 @@ class SettingsViewModel(
     private val clearAllChatDataUseCase: ClearAllChatDataUseCase,
     private val chatPreferencesDataSource: ChatPreferencesDataSource,
     private val broadcastNicknameUseCase: BroadcastNicknameUseCase,
+    private val clearCachedChatAttachmentsUseCase: ClearCachedChatAttachmentsUseCase,
+    private val clearOldCachedChatAttachmentsUseCase: ClearOldCachedChatAttachmentsUseCase,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SettingsUiState())
     val state = _state.asStateFlow()
@@ -28,6 +32,7 @@ class SettingsViewModel(
     val effect = _effect.asSharedFlow()
 
     private var clearDataJob: Job? = null
+    private var clearMediaCacheJob: Job? = null
 
     init {
         loadData()
@@ -42,6 +47,16 @@ class SettingsViewModel(
             SettingsEvent.CopyUserIdClicked -> handleCopyUserId()
             SettingsEvent.ClearAllDataConfirmed -> clearAllData()
             is SettingsEvent.DebugModeToggled -> toggleDebugMode(event.enabled)
+            SettingsEvent.ClearMediaCacheClicked -> clearMediaCache()
+            is SettingsEvent.MediaCacheRetentionDaysChanged -> {
+                _state.update { current ->
+                    current.copy(
+                        mediaCacheRetentionDays = event.days.filter(Char::isDigit).take(4),
+                        mediaCacheMessage = null,
+                    )
+                }
+            }
+            SettingsEvent.ClearOldMediaCacheClicked -> clearOldMediaCache()
         }
     }
 
@@ -51,7 +66,16 @@ class SettingsViewModel(
                 val currentUserId = getCurrentUserIdUseCase().orEmpty()
                 val nickname = chatPreferencesDataSource.getNickname()
                 val debugMode = chatPreferencesDataSource.isDebugModeEnabled()
-                _state.update { it.copy(currentUserId = currentUserId, nickname = nickname, savedNickname = nickname, debugMode = debugMode) }
+                val mediaCacheRetentionDays = chatPreferencesDataSource.getMediaCacheRetentionDays()
+                _state.update {
+                    it.copy(
+                        currentUserId = currentUserId,
+                        nickname = nickname,
+                        savedNickname = nickname,
+                        debugMode = debugMode,
+                        mediaCacheRetentionDays = mediaCacheRetentionDays.toString(),
+                    )
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
@@ -106,5 +130,66 @@ class SettingsViewModel(
                 _state.update { it.copy(isClearingData = false) }
             }
         }
+    }
+
+    private fun clearMediaCache() {
+        if (state.value.isClearingMediaCache) return
+
+        clearMediaCacheJob?.cancel()
+        clearMediaCacheJob = viewModelScope.launch {
+            _state.update { it.copy(isClearingMediaCache = true, mediaCacheMessage = null) }
+            try {
+                val clearedCount = clearCachedChatAttachmentsUseCase()
+                _state.update {
+                    it.copy(
+                        isClearingMediaCache = false,
+                        mediaCacheMessage = "Cleared $clearedCount cached files.",
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                _state.update {
+                    it.copy(
+                        isClearingMediaCache = false,
+                        mediaCacheMessage = "Couldn't clear cached media.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun clearOldMediaCache() {
+        if (state.value.isClearingMediaCache) return
+
+        val retentionDays = state.value.mediaCacheRetentionDays.toIntOrNull()?.coerceAtLeast(0) ?: return
+        clearMediaCacheJob?.cancel()
+        clearMediaCacheJob = viewModelScope.launch {
+            _state.update { it.copy(isClearingMediaCache = true, mediaCacheMessage = null) }
+            try {
+                chatPreferencesDataSource.saveMediaCacheRetentionDays(retentionDays)
+                val clearedCount = clearOldCachedChatAttachmentsUseCase(retentionDays * DAY_MILLIS)
+                _state.update {
+                    it.copy(
+                        isClearingMediaCache = false,
+                        mediaCacheRetentionDays = retentionDays.toString(),
+                        mediaCacheMessage = "Cleared $clearedCount files older than $retentionDays days.",
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                _state.update {
+                    it.copy(
+                        isClearingMediaCache = false,
+                        mediaCacheMessage = "Couldn't clear old media.",
+                    )
+                }
+            }
+        }
+    }
+
+    private companion object {
+        private const val DAY_MILLIS = 24L * 60L * 60L * 1000L
     }
 }

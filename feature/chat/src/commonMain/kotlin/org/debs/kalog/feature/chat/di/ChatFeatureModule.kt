@@ -4,6 +4,8 @@ import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
 import org.debs.kalog.feature.chat.data.crypto.ChatTransportKeyProvider
 import org.debs.kalog.feature.chat.data.crypto.SettingsChatKeyStore
+import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
+import org.debs.kalog.feature.chat.data.cache.createChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.local.ChatLocalDataSource
 import org.debs.kalog.feature.chat.data.local.InMemoryChatLocalDataSource
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
@@ -15,11 +17,13 @@ import org.debs.kalog.feature.chat.data.repository.OfflineFirstChatRepository
 import org.debs.kalog.feature.chat.domain.repository.ChatRepository
 import org.debs.kalog.feature.chat.domain.usecase.AcceptChatInvitationUseCase
 import org.debs.kalog.feature.chat.domain.usecase.BroadcastNicknameUseCase
+import org.debs.kalog.feature.chat.domain.usecase.ClearCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CreateDirectChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CreateGroupChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetChatParticipantsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CloseChatUseCase
+import org.debs.kalog.feature.chat.domain.usecase.ClearOldCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.DeclineChatInvitationUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
 import org.debs.kalog.feature.chat.domain.usecase.InviteUserToChatUseCase
@@ -47,12 +51,15 @@ val chatFeatureModule = module {
     single<TransportKeyProvider> { ChatTransportKeyProvider(get()) }
     single { ChatMessageCipher(get(), get()) }
     single<ChatLocalDataSource> { InMemoryChatLocalDataSource() }
+    single<ChatAttachmentFileCache> { createChatAttachmentFileCache() }
     single { ChatApiService(get(), get(), get()) }
     single<ChatRemoteDataSource> { KtorChatRemoteDataSource(get()) }
-    single<ChatRepository> { OfflineFirstChatRepository(get(), get(), get(), get(), get(), get(), get()) }
+    single<ChatRepository> { OfflineFirstChatRepository(get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { AcceptChatInvitationUseCase(get()) }
     factory { BroadcastNicknameUseCase(get()) }
+    factory { ClearCachedChatAttachmentsUseCase(get()) }
     factory { ClearAllChatDataUseCase(get()) }
+    factory { ClearOldCachedChatAttachmentsUseCase(get()) }
     factory { CloseChatUseCase(get()) }
     factory { CreateDirectChatUseCase(get()) }
     factory { CreateGroupChatUseCase(get()) }
@@ -72,7 +79,7 @@ val chatFeatureModule = module {
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
     factory { ChatListViewModel(get(), get(), get(), get()) }
-    factory { SettingsViewModel(get(), get(), get(), get()) }
+    factory { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatInfoViewModel(chatId, get(), get(), get(), get()) }
 }

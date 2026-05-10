@@ -18,7 +18,7 @@ actual fun platformModules(): List<Module> {
         module {
             single<AppExitManager> { JvmAppExitManager() }
             single<DatabaseDriverFactory> { JvmDatabaseDriverFactory() }
-            single<PlatformHttpClientFactory> { OkHttpPlatformHttpClientFactory() }
+            single<PlatformHttpClientFactory> { OkHttpPlatformHttpClientFactory(get()) }
             single<SettingsFactory> { JvmSettingsFactory("org.debs.kalog") }
             single<SecureSettingsFactory> { JvmSecureSettingsFactory("org.debs.kalog") }
         },

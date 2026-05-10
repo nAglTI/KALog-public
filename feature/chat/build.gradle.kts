@@ -26,6 +26,9 @@ kotlin {
     }
 
     sourceSets {
+        androidMain.dependencies {
+            implementation(libs.androidx.activity.compose)
+        }
         commonMain.dependencies {
             implementation(projects.core.crypto)
             implementation(projects.core.network)
@@ -55,6 +58,12 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.mock)
             implementation(libs.ktor.serialization.kotlinx.json)
+        }
+        jvmMain.dependencies {
+            implementation("org.openjfx:javafx-base:21.0.5:win")
+            implementation("org.openjfx:javafx-graphics:21.0.5:win")
+            implementation("org.openjfx:javafx-media:21.0.5:win")
+            implementation("org.openjfx:javafx-swing:21.0.5:win")
         }
     }
 }
