@@ -4,7 +4,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.background
@@ -49,6 +48,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -82,6 +82,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -122,6 +123,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.debs.kalog.feature.chat.presentation.platform.hasSoftwareKeyboard
 import org.debs.kalog.feature.chat.presentation.platform.loadImagePreview
@@ -136,6 +139,7 @@ import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
+import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
 import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
@@ -159,6 +163,7 @@ fun ChatDetailsScreen(
     onPasteClipboardAttachments: () -> Boolean,
     onAttachmentsDropped: (List<ChatAttachment>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
+    onAttachmentDownloadClick: (String) -> Unit,
     onLoadMoreMessages: () -> Unit,
     onInviteUserClick: () -> Unit,
     onChatInfoClick: () -> Unit = {},
@@ -422,6 +427,7 @@ fun ChatDetailsScreen(
                             onOpenMedia = { attachment ->
                                 fullScreenGallery = message.toFullScreenMediaGallery(attachment)
                             },
+                            onRequestAttachmentDownload = onAttachmentDownloadClick,
                             playingVoiceAttachmentId = playingVoiceAttachmentId,
                             voicePlaybackProgress = voicePlaybackProgress,
                             onToggleVoicePlayback = onToggleVoicePlayback,
@@ -646,6 +652,7 @@ private fun ServiceMessageBubble(
 private fun UserMessageBubble(
     message: ChatMessage.User,
     onOpenMedia: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
     playingVoiceAttachmentId: String?,
     voicePlaybackProgress: Map<String, VoicePlaybackProgress>,
     onToggleVoicePlayback: (ChatAttachment) -> Unit,
@@ -704,6 +711,7 @@ private fun UserMessageBubble(
                             attachment = mediaGroup.first(),
                             isMine = message.isMine,
                             onOpenMedia = onOpenMedia,
+                            onRequestAttachmentDownload = onRequestAttachmentDownload,
                             isVoicePlaying = playingVoiceAttachmentId == mediaGroup.first().id,
                             voicePlaybackProgress = voicePlaybackProgress[mediaGroup.first().id],
                             onToggleVoicePlayback = onToggleVoicePlayback,
@@ -714,6 +722,7 @@ private fun UserMessageBubble(
                             attachments = mediaGroup,
                             isMine = message.isMine,
                             onOpenMedia = onOpenMedia,
+                            onRequestAttachmentDownload = onRequestAttachmentDownload,
                         )
                     }
                 }
@@ -722,6 +731,7 @@ private fun UserMessageBubble(
                         attachment = attachment,
                         isMine = message.isMine,
                         onOpenMedia = onOpenMedia,
+                        onRequestAttachmentDownload = onRequestAttachmentDownload,
                         isVoicePlaying = playingVoiceAttachmentId == attachment.id,
                         voicePlaybackProgress = voicePlaybackProgress[attachment.id],
                         onToggleVoicePlayback = onToggleVoicePlayback,
@@ -751,6 +761,7 @@ private fun MediaAttachmentGrid(
     attachments: List<ChatAttachment>,
     isMine: Boolean,
     onOpenMedia: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
 ) {
     val media = attachments.take(MAX_MEDIA_GRID_ITEMS)
     Column(
@@ -758,43 +769,43 @@ private fun MediaAttachmentGrid(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         when (media.size) {
-            2 -> MediaGridRow(media, isMine, onOpenMedia, height = 154.dp)
+            2 -> MediaGridRow(media, isMine, onOpenMedia, onRequestAttachmentDownload, height = 154.dp)
             3 -> {
-                MediaGridRow(media.take(1), isMine, onOpenMedia, height = 172.dp)
-                MediaGridRow(media.drop(1), isMine, onOpenMedia, height = 104.dp)
+                MediaGridRow(media.take(1), isMine, onOpenMedia, onRequestAttachmentDownload, height = 172.dp)
+                MediaGridRow(media.drop(1), isMine, onOpenMedia, onRequestAttachmentDownload, height = 104.dp)
             }
             4 -> {
-                MediaGridRow(media.take(2), isMine, onOpenMedia, height = 154.dp)
-                MediaGridRow(media.drop(2), isMine, onOpenMedia, height = 154.dp)
+                MediaGridRow(media.take(2), isMine, onOpenMedia, onRequestAttachmentDownload, height = 154.dp)
+                MediaGridRow(media.drop(2), isMine, onOpenMedia, onRequestAttachmentDownload, height = 154.dp)
             }
             5 -> {
-                MediaGridRow(media.take(1), isMine, onOpenMedia, height = 164.dp)
-                MediaGridRow(media.drop(1).take(2), isMine, onOpenMedia, height = 98.dp)
-                MediaGridRow(media.drop(3), isMine, onOpenMedia, height = 98.dp)
+                MediaGridRow(media.take(1), isMine, onOpenMedia, onRequestAttachmentDownload, height = 164.dp)
+                MediaGridRow(media.drop(1).take(2), isMine, onOpenMedia, onRequestAttachmentDownload, height = 98.dp)
+                MediaGridRow(media.drop(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 98.dp)
             }
             6 -> {
-                MediaGridRow(media.take(3), isMine, onOpenMedia, height = 104.dp)
-                MediaGridRow(media.drop(3), isMine, onOpenMedia, height = 104.dp)
+                MediaGridRow(media.take(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 104.dp)
+                MediaGridRow(media.drop(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 104.dp)
             }
             7 -> {
-                MediaGridRow(media.take(1), isMine, onOpenMedia, height = 154.dp)
-                MediaGridRow(media.drop(1).take(3), isMine, onOpenMedia, height = 90.dp)
-                MediaGridRow(media.drop(4), isMine, onOpenMedia, height = 90.dp)
+                MediaGridRow(media.take(1), isMine, onOpenMedia, onRequestAttachmentDownload, height = 154.dp)
+                MediaGridRow(media.drop(1).take(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 90.dp)
+                MediaGridRow(media.drop(4), isMine, onOpenMedia, onRequestAttachmentDownload, height = 90.dp)
             }
             8 -> {
-                MediaGridRow(media.take(2), isMine, onOpenMedia, height = 126.dp)
-                MediaGridRow(media.drop(2).take(3), isMine, onOpenMedia, height = 90.dp)
-                MediaGridRow(media.drop(5), isMine, onOpenMedia, height = 90.dp)
+                MediaGridRow(media.take(2), isMine, onOpenMedia, onRequestAttachmentDownload, height = 126.dp)
+                MediaGridRow(media.drop(2).take(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 90.dp)
+                MediaGridRow(media.drop(5), isMine, onOpenMedia, onRequestAttachmentDownload, height = 90.dp)
             }
             9 -> {
-                MediaGridRow(media.take(3), isMine, onOpenMedia, height = 88.dp)
-                MediaGridRow(media.drop(3).take(3), isMine, onOpenMedia, height = 88.dp)
-                MediaGridRow(media.drop(6), isMine, onOpenMedia, height = 88.dp)
+                MediaGridRow(media.take(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 88.dp)
+                MediaGridRow(media.drop(3).take(3), isMine, onOpenMedia, onRequestAttachmentDownload, height = 88.dp)
+                MediaGridRow(media.drop(6), isMine, onOpenMedia, onRequestAttachmentDownload, height = 88.dp)
             }
             else -> {
-                MediaGridRow(media.take(2), isMine, onOpenMedia, height = 122.dp)
-                MediaGridRow(media.drop(2).take(4), isMine, onOpenMedia, height = 72.dp)
-                MediaGridRow(media.drop(6).take(4), isMine, onOpenMedia, height = 72.dp)
+                MediaGridRow(media.take(2), isMine, onOpenMedia, onRequestAttachmentDownload, height = 122.dp)
+                MediaGridRow(media.drop(2).take(4), isMine, onOpenMedia, onRequestAttachmentDownload, height = 72.dp)
+                MediaGridRow(media.drop(6).take(4), isMine, onOpenMedia, onRequestAttachmentDownload, height = 72.dp)
             }
         }
     }
@@ -805,6 +816,7 @@ private fun MediaGridRow(
     attachments: List<ChatAttachment>,
     isMine: Boolean,
     onOpenMedia: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
     height: Dp,
 ) {
     Row(
@@ -818,6 +830,7 @@ private fun MediaGridRow(
                 attachment = attachment,
                 isMine = isMine,
                 onOpenMedia = onOpenMedia,
+                onRequestAttachmentDownload = onRequestAttachmentDownload,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
@@ -831,6 +844,7 @@ private fun MediaGridCell(
     attachment: ChatAttachment,
     isMine: Boolean,
     onOpenMedia: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val imageBitmap = rememberAttachmentImagePreviewBitmap(attachment)
@@ -840,11 +854,16 @@ private fun MediaGridCell(
         ChatAttachmentKind.Video -> attachment.localUri != null
         else -> false
     }
+    val canRequestDownload = attachment.localUri == null && attachment.loadState.canRequestDownload()
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(enabled = canOpen) {
-                onOpenMedia(attachment)
+            .clickable(enabled = canOpen || canRequestDownload) {
+                if (canOpen) {
+                    onOpenMedia(attachment)
+                } else {
+                    onRequestAttachmentDownload(attachment.id)
+                }
             },
         shape = RoundedCornerShape(8.dp),
         color = if (isMine) {
@@ -867,7 +886,7 @@ private fun MediaGridCell(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                 )
-                else -> MediaLoadingPlaceholderContent()
+                else -> MediaLoadingPlaceholderContent(attachment.loadState)
             }
             if (attachment.kind == ChatAttachmentKind.Video && attachment.localUri != null) {
                 Surface(
@@ -899,6 +918,7 @@ private fun MessageAttachmentChip(
     attachment: ChatAttachment,
     isMine: Boolean,
     onOpenMedia: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
     isVoicePlaying: Boolean,
     voicePlaybackProgress: VoicePlaybackProgress?,
     onToggleVoicePlayback: (ChatAttachment) -> Unit,
@@ -906,7 +926,7 @@ private fun MessageAttachmentChip(
 ) {
     when (attachment.kind) {
         ChatAttachmentKind.Image -> {
-            ImageAttachmentPreview(attachment, isMine, onOpenMedia)
+            ImageAttachmentPreview(attachment, isMine, onOpenMedia, onRequestAttachmentDownload)
             return
         }
         ChatAttachmentKind.Video -> {
@@ -914,6 +934,7 @@ private fun MessageAttachmentChip(
                 attachment = attachment,
                 isMine = isMine,
                 onOpenVideo = onOpenMedia,
+                onRequestAttachmentDownload = onRequestAttachmentDownload,
             )
             return
         }
@@ -924,6 +945,7 @@ private fun MessageAttachmentChip(
                 isPlaying = isVoicePlaying,
                 progress = voicePlaybackProgress,
                 onTogglePlayback = onToggleVoicePlayback,
+                onRequestAttachmentDownload = onRequestAttachmentDownload,
                 onSeekPlayback = onSeekVoicePlayback,
             )
             return
@@ -935,6 +957,7 @@ private fun MessageAttachmentChip(
                 isPlaying = isVoicePlaying,
                 progress = voicePlaybackProgress,
                 onTogglePlayback = onToggleVoicePlayback,
+                onRequestAttachmentDownload = onRequestAttachmentDownload,
                 onSeekPlayback = onSeekVoicePlayback,
             )
             return
@@ -942,7 +965,13 @@ private fun MessageAttachmentChip(
         ChatAttachmentKind.File -> Unit
     }
 
+    val canRequestDownload = attachment.localUri == null && attachment.loadState.canRequestDownload()
     Surface(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = canRequestDownload) {
+                onRequestAttachmentDownload(attachment.id)
+            },
         shape = RoundedCornerShape(12.dp),
         color = if (isMine) {
             MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f)
@@ -956,7 +985,7 @@ private fun MessageAttachmentChip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = attachment.kind.label(),
+                text = if (attachment.localUri == null) attachment.loadState.shortLabel() else attachment.kind.label(),
                 style = MaterialTheme.typography.labelMedium,
                 color = if (isMine) {
                     MaterialTheme.colorScheme.onPrimary
@@ -966,7 +995,7 @@ private fun MessageAttachmentChip(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = attachment.displayName(),
+                text = attachment.displayNameWithLoadState(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (isMine) {
                     MaterialTheme.colorScheme.onPrimary
@@ -985,14 +1014,20 @@ private fun ImageAttachmentPreview(
     attachment: ChatAttachment,
     isMine: Boolean,
     onOpenImage: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
 ) {
     val imageBitmap = rememberAttachmentImagePreviewBitmap(attachment)
+    val canRequestDownload = attachment.localUri == null && attachment.loadState.canRequestDownload()
 
     Surface(
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))
-            .clickable(enabled = imageBitmap != null) {
-                onOpenImage(attachment)
+            .clickable(enabled = imageBitmap != null || canRequestDownload) {
+                if (imageBitmap != null) {
+                    onOpenImage(attachment)
+                } else {
+                    onRequestAttachmentDownload(attachment.id)
+                }
             },
         shape = RoundedCornerShape(14.dp),
         color = if (isMine) {
@@ -1029,6 +1064,7 @@ private fun ImageAttachmentPreview(
                 attachment = attachment,
                 isMine = isMine,
                 title = "Image",
+                onRequestDownload = { onRequestAttachmentDownload(attachment.id) },
             )
         }
     }
@@ -1041,6 +1077,7 @@ private fun FullScreenMediaGalleryViewer(
     onDismiss: () -> Unit,
 ) {
     val media = gallery.selectedMedia ?: return
+    var galleryImageBitmaps by remember(gallery.items) { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
     val hasPrevious = gallery.selectedIndex > 0
     val hasNext = gallery.selectedIndex < gallery.items.lastIndex
     val positionLabel = if (gallery.items.size > 1) {
@@ -1058,19 +1095,43 @@ private fun FullScreenMediaGalleryViewer(
             onGalleryChanged(gallery.copy(selectedIndex = gallery.selectedIndex + 1))
         }
     }
+    fun rememberGalleryImageBitmap(attachmentId: String, bitmap: ImageBitmap) {
+        if (galleryImageBitmaps[attachmentId] === bitmap) return
+        FullScreenAttachmentImageMemoryCache.put(attachmentId, bitmap)
+        val nextBitmaps = LinkedHashMap(galleryImageBitmaps)
+        nextBitmaps.remove(attachmentId)
+        nextBitmaps[attachmentId] = bitmap
+        while (nextBitmaps.size > FULL_SCREEN_GALLERY_BITMAP_CACHE_ITEMS) {
+            val oldestKey = nextBitmaps.keys.firstOrNull() ?: break
+            nextBitmaps.remove(oldestKey)
+        }
+        galleryImageBitmaps = nextBitmaps
+    }
 
     when (media.attachment.kind) {
-        ChatAttachmentKind.Image -> FullScreenImageViewer(
-            media = media,
-            previousMedia = gallery.items.getOrNull(gallery.selectedIndex - 1),
-            nextMedia = gallery.items.getOrNull(gallery.selectedIndex + 1),
-            hasPrevious = hasPrevious,
-            hasNext = hasNext,
-            positionLabel = positionLabel,
-            onPrevious = onPrevious,
-            onNext = onNext,
-            onDismiss = onDismiss,
-        )
+        ChatAttachmentKind.Image -> key(media.attachment.id) {
+            FullScreenImageViewer(
+                media = media,
+                previousMedia = gallery.items.getOrNull(gallery.selectedIndex - 1),
+                nextMedia = gallery.items.getOrNull(gallery.selectedIndex + 1),
+                imageBitmapSeed = galleryImageBitmaps[media.attachment.id],
+                previousImageBitmapSeed = gallery.items.getOrNull(gallery.selectedIndex - 1)
+                    ?.attachment
+                    ?.id
+                    ?.let(galleryImageBitmaps::get),
+                nextImageBitmapSeed = gallery.items.getOrNull(gallery.selectedIndex + 1)
+                    ?.attachment
+                    ?.id
+                    ?.let(galleryImageBitmaps::get),
+                hasPrevious = hasPrevious,
+                hasNext = hasNext,
+                positionLabel = positionLabel,
+                onPrevious = onPrevious,
+                onNext = onNext,
+                onDismiss = onDismiss,
+                onImageBitmapReady = ::rememberGalleryImageBitmap,
+            )
+        }
         ChatAttachmentKind.Video -> FullScreenVideoViewer(
             media = media,
             hasPrevious = hasPrevious,
@@ -1089,22 +1150,34 @@ private fun FullScreenImageViewer(
     media: FullScreenMedia,
     previousMedia: FullScreenMedia?,
     nextMedia: FullScreenMedia?,
+    imageBitmapSeed: ImageBitmap?,
+    previousImageBitmapSeed: ImageBitmap?,
+    nextImageBitmapSeed: ImageBitmap?,
     hasPrevious: Boolean,
     hasNext: Boolean,
     positionLabel: String,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onDismiss: () -> Unit,
+    onImageBitmapReady: (String, ImageBitmap) -> Unit,
 ) {
     val attachment = media.attachment
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
-    val imageBitmap = rememberAttachmentImageBitmap(attachment)
+    val imageBitmap = rememberAttachmentImageBitmap(
+        attachment = attachment,
+        imageBitmapSeed = imageBitmapSeed,
+        onImageBitmapReady = onImageBitmapReady,
+    )
     val previousImageBitmap = rememberOptionalAttachmentImageBitmap(
-        previousMedia?.attachment?.takeIf { item -> item.kind == ChatAttachmentKind.Image },
+        attachment = previousMedia?.attachment?.takeIf { item -> item.kind == ChatAttachmentKind.Image },
+        imageBitmapSeed = previousImageBitmapSeed,
+        onImageBitmapReady = onImageBitmapReady,
     )
     val nextImageBitmap = rememberOptionalAttachmentImageBitmap(
-        nextMedia?.attachment?.takeIf { item -> item.kind == ChatAttachmentKind.Image },
+        attachment = nextMedia?.attachment?.takeIf { item -> item.kind == ChatAttachmentKind.Image },
+        imageBitmapSeed = nextImageBitmapSeed,
+        onImageBitmapReady = onImageBitmapReady,
     )
     var scale by remember(attachment.id) { mutableStateOf(1f) }
     var offset by remember(attachment.id) { mutableStateOf(Offset.Zero) }
@@ -1201,10 +1274,26 @@ private fun FullScreenImageViewer(
                     }
                 }
                 fun navigateToPrevious() {
-                    if (hasPrevious) animateGallerySlide(direction = 1, navigate = onPrevious)
+                    if (hasPrevious) {
+                        previousMedia?.attachment?.id?.let { attachmentId ->
+                            previousImageBitmap?.let { bitmap ->
+                                FullScreenAttachmentImageMemoryCache.put(attachmentId, bitmap)
+                                onImageBitmapReady(attachmentId, bitmap)
+                            }
+                        }
+                        animateGallerySlide(direction = 1, navigate = onPrevious)
+                    }
                 }
                 fun navigateToNext() {
-                    if (hasNext) animateGallerySlide(direction = -1, navigate = onNext)
+                    if (hasNext) {
+                        nextMedia?.attachment?.id?.let { attachmentId ->
+                            nextImageBitmap?.let { bitmap ->
+                                FullScreenAttachmentImageMemoryCache.put(attachmentId, bitmap)
+                                onImageBitmapReady(attachmentId, bitmap)
+                            }
+                        }
+                        animateGallerySlide(direction = -1, navigate = onNext)
+                    }
                 }
                 fun settlePanOrNavigate() {
                     val bounds = panBounds(scale)
@@ -1371,12 +1460,7 @@ private fun FullScreenVideoViewer(
             localUri = localUri,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 0.dp, vertical = 86.dp)
-                .fullScreenGallerySwipe(
-                    enabled = hasPrevious || hasNext,
-                    onPrevious = onPrevious,
-                    onNext = onNext,
-                ),
+                .padding(horizontal = 0.dp, vertical = 86.dp),
         )
         FullScreenMediaHeader(
             media = media,
@@ -1567,33 +1651,6 @@ private fun RowScope.FullScreenGalleryNavigation(
     )
 }
 
-private fun Modifier.fullScreenGallerySwipe(
-    enabled: Boolean,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-): Modifier {
-    if (!enabled) return this
-    return pointerInput(onPrevious, onNext) {
-        var totalDrag = 0f
-        detectHorizontalDragGestures(
-            onDragStart = { totalDrag = 0f },
-            onHorizontalDrag = { change, dragAmount ->
-                totalDrag += dragAmount
-                change.consume()
-            },
-            onDragEnd = {
-                if (abs(totalDrag) >= FULL_SCREEN_SWIPE_THRESHOLD_PX) {
-                    if (totalDrag > 0f) {
-                        onPrevious()
-                    } else {
-                        onNext()
-                    }
-                }
-            },
-        )
-    }
-}
-
 private suspend fun PointerInputScope.detectFullScreenImageGestures(
     onZoom: (Float) -> Unit,
     onPan: (Offset) -> Unit,
@@ -1691,8 +1748,10 @@ private fun VideoAttachmentPreview(
     attachment: ChatAttachment,
     isMine: Boolean,
     onOpenVideo: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
 ) {
     val thumbnailBitmap = rememberVideoThumbnailBitmap(attachment)
+    val canRequestDownload = attachment.localUri == null && attachment.loadState.canRequestDownload()
 
     BoxWithConstraints {
         val previewWidth = (maxWidth.value * 0.58f).dp.coerceAtMost(240.dp)
@@ -1700,8 +1759,12 @@ private fun VideoAttachmentPreview(
             modifier = Modifier
                 .width(previewWidth)
                 .clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = attachment.localUri != null) {
-                    onOpenVideo(attachment)
+                .clickable(enabled = attachment.localUri != null || canRequestDownload) {
+                    if (attachment.localUri != null) {
+                        onOpenVideo(attachment)
+                    } else {
+                        onRequestAttachmentDownload(attachment.id)
+                    }
                 },
             shape = RoundedCornerShape(14.dp),
             color = Color(0xFF111827),
@@ -1724,7 +1787,7 @@ private fun VideoAttachmentPreview(
                             .fillMaxSize()
                             .background(Color(0xFF1F2937)),
                     ) {
-                        MediaLoadingPlaceholderContent()
+                        MediaLoadingPlaceholderContent(attachment.loadState)
                     }
                 }
                 if (attachment.localUri != null) {
@@ -1775,6 +1838,7 @@ private fun VoiceAttachmentPreview(
     isPlaying: Boolean,
     progress: VoicePlaybackProgress?,
     onTogglePlayback: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
     onSeekPlayback: (ChatAttachment, Long) -> Unit,
 ) {
     val durationMillis = (progress?.durationMillis ?: attachment.durationMillis ?: 0L).coerceAtLeast(0L)
@@ -1809,8 +1873,12 @@ private fun VoiceAttachmentPreview(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(CircleShape)
-                    .clickable(enabled = attachment.localUri != null) {
-                        onTogglePlayback(attachment)
+                    .clickable(enabled = attachment.localUri != null || attachment.loadState.canRequestDownload()) {
+                        if (attachment.localUri != null) {
+                            onTogglePlayback(attachment)
+                        } else {
+                            onRequestAttachmentDownload(attachment.id)
+                        }
                     },
                 shape = CircleShape,
                 color = if (isMine) {
@@ -1824,7 +1892,13 @@ private fun VoiceAttachmentPreview(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                        imageVector = if (attachment.localUri == null) {
+                            Icons.Outlined.FileDownload
+                        } else if (isPlaying) {
+                            Icons.Outlined.Stop
+                        } else {
+                            Icons.Outlined.PlayArrow
+                        },
                         contentDescription = if (isPlaying) "Stop voice message" else "Play voice message",
                         tint = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp),
@@ -1836,7 +1910,7 @@ private fun VoiceAttachmentPreview(
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 Text(
-                    text = if (isPlaying) "Playing voice" else "Voice message",
+                    text = if (attachment.localUri == null) attachment.loadState.statusText() else if (isPlaying) "Playing voice" else "Voice message",
                     style = MaterialTheme.typography.labelLarge,
                     color = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
@@ -1869,6 +1943,7 @@ private fun AudioAttachmentPreview(
     isPlaying: Boolean,
     progress: VoicePlaybackProgress?,
     onTogglePlayback: (ChatAttachment) -> Unit,
+    onRequestAttachmentDownload: (String) -> Unit,
     onSeekPlayback: (ChatAttachment, Long) -> Unit,
 ) {
     val durationMillis = (progress?.durationMillis ?: attachment.durationMillis ?: 0L).coerceAtLeast(0L)
@@ -1903,8 +1978,12 @@ private fun AudioAttachmentPreview(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(CircleShape)
-                    .clickable(enabled = attachment.localUri != null) {
-                        onTogglePlayback(attachment)
+                    .clickable(enabled = attachment.localUri != null || attachment.loadState.canRequestDownload()) {
+                        if (attachment.localUri != null) {
+                            onTogglePlayback(attachment)
+                        } else {
+                            onRequestAttachmentDownload(attachment.id)
+                        }
                     },
                 shape = CircleShape,
                 color = if (isMine) {
@@ -1918,7 +1997,13 @@ private fun AudioAttachmentPreview(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                        imageVector = if (attachment.localUri == null) {
+                            Icons.Outlined.FileDownload
+                        } else if (isPlaying) {
+                            Icons.Outlined.Stop
+                        } else {
+                            Icons.Outlined.PlayArrow
+                        },
                         contentDescription = if (isPlaying) "Stop audio" else "Play audio",
                         tint = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp),
@@ -1930,7 +2015,7 @@ private fun AudioAttachmentPreview(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = attachment.displayName(),
+                    text = attachment.displayNameWithLoadState(),
                     style = MaterialTheme.typography.labelLarge,
                     color = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
@@ -2131,9 +2216,14 @@ private fun MediaLoadingPlaceholder(
     attachment: ChatAttachment,
     isMine: Boolean,
     title: String,
+    onRequestDownload: () -> Unit,
 ) {
+    val canRequestDownload = attachment.localUri == null && attachment.loadState.canRequestDownload()
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = canRequestDownload, onClick = onRequestDownload),
         shape = RoundedCornerShape(14.dp),
         color = if (isMine) {
             MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f)
@@ -2146,20 +2236,16 @@ private fun MediaLoadingPlaceholder(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
-                strokeWidth = 2.dp,
-                color = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-            )
+            AttachmentLoadStateIcon(attachment.loadState, isMine)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = title,
+                    text = if (attachment.localUri == null) attachment.loadState.statusText() else title,
                     style = MaterialTheme.typography.labelLarge,
                     color = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "Loading ${attachment.displayName()}",
+                    text = attachment.displayNameWithLoadState(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (isMine) {
                         MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f)
@@ -2175,17 +2261,50 @@ private fun MediaLoadingPlaceholder(
 }
 
 @Composable
-private fun MediaLoadingPlaceholderContent() {
+private fun MediaLoadingPlaceholderContent(
+    loadState: ChatAttachmentLoadState = ChatAttachmentLoadState.NotStarted,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF1F2937)),
         contentAlignment = Alignment.Center,
     ) {
+        if (loadState.canRequestDownload()) {
+            Icon(
+                imageVector = Icons.Outlined.FileDownload,
+                contentDescription = "Download attachment",
+                tint = Color.White,
+                modifier = Modifier.size(30.dp),
+            )
+        } else {
+            CircularProgressIndicator(
+                modifier = Modifier.size(28.dp),
+                strokeWidth = 2.dp,
+                color = Color.White,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AttachmentLoadStateIcon(
+    loadState: ChatAttachmentLoadState,
+    isMine: Boolean,
+) {
+    val tint = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+    if (loadState.canRequestDownload()) {
+        Icon(
+            imageVector = Icons.Outlined.FileDownload,
+            contentDescription = "Download attachment",
+            tint = tint,
+            modifier = Modifier.size(24.dp),
+        )
+    } else {
         CircularProgressIndicator(
-            modifier = Modifier.size(28.dp),
+            modifier = Modifier.size(22.dp),
             strokeWidth = 2.dp,
-            color = Color.White,
+            color = tint,
         )
     }
 }
@@ -2691,12 +2810,14 @@ private fun rememberAttachmentImagePreviewBitmap(
             return@produceState
         }
         value = null
-        value = withContext(Dispatchers.Default) {
-            loadImagePreview(
-                localUri = localUri,
-                contentBytes = contentBytes,
-                maxSidePx = CHAT_IMAGE_PREVIEW_MAX_SIDE_PX,
-            )?.decodeToImageBitmapOrNull()
+        value = MediaPreviewDecodeLimiter.withPermit {
+            withContext(Dispatchers.Default) {
+                loadImagePreview(
+                    localUri = localUri,
+                    contentBytes = contentBytes,
+                    maxSidePx = CHAT_IMAGE_PREVIEW_MAX_SIDE_PX,
+                )?.decodeToImageBitmapOrNull()
+            }
         }?.also { bitmap -> MediaPreviewMemoryCache.put(cacheKey, bitmap) }
             ?.let { bitmap -> KeyedImageBitmap(cacheKey, bitmap) }
     }
@@ -2706,6 +2827,8 @@ private fun rememberAttachmentImagePreviewBitmap(
 @Composable
 private fun rememberAttachmentImageBitmap(
     attachment: ChatAttachment,
+    imageBitmapSeed: ImageBitmap?,
+    onImageBitmapReady: (String, ImageBitmap) -> Unit,
 ): ImageBitmap? {
     val contentBytes = attachment.contentBytes
     val localUri = attachment.localUri
@@ -2713,35 +2836,80 @@ private fun rememberAttachmentImageBitmap(
         prefix = "full-image",
         maxSidePx = CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX,
     )
+    val previewKey = attachment.previewCacheKey(
+        prefix = "image",
+        maxSidePx = CHAT_IMAGE_PREVIEW_MAX_SIDE_PX,
+    )
+    val initialBitmap = imageBitmapSeed?.let { bitmap ->
+        KeyedImageBitmap(bitmapKey, bitmap)
+    } ?: FullScreenImageMemoryCache.get(bitmapKey)?.let { bitmap ->
+        KeyedImageBitmap(bitmapKey, bitmap)
+    } ?: FullScreenAttachmentImageMemoryCache.get(attachment.id)?.let { bitmap ->
+        KeyedImageBitmap(bitmapKey, bitmap)
+    } ?: MediaPreviewMemoryCache.get(previewKey)?.let { bitmap ->
+        KeyedImageBitmap(previewKey, bitmap)
+    }
     val imageBitmap by produceState<KeyedImageBitmap?>(
-        initialValue = FullScreenImageMemoryCache.get(bitmapKey)?.let { bitmap ->
-            KeyedImageBitmap(bitmapKey, bitmap)
-        },
-        key1 = attachment.id,
-        key2 = localUri,
-        key3 = contentBytes,
+        initialBitmap,
+        attachment.id,
+        localUri,
+        contentBytes,
+        imageBitmapSeed,
     ) {
-        FullScreenImageMemoryCache.get(bitmapKey)?.let { cached ->
-            value = KeyedImageBitmap(bitmapKey, cached)
+        if (value?.key != bitmapKey && value?.key != previewKey) {
+            value = initialBitmap
+        }
+        imageBitmapSeed?.let { seeded ->
+            FullScreenAttachmentImageMemoryCache.put(attachment.id, seeded)
+            FullScreenImageMemoryCache.put(bitmapKey, seeded)
+            value = KeyedImageBitmap(bitmapKey, seeded)
             return@produceState
         }
-        value = null
+        FullScreenImageMemoryCache.get(bitmapKey)?.let { cached ->
+            FullScreenAttachmentImageMemoryCache.put(attachment.id, cached)
+            value = KeyedImageBitmap(bitmapKey, cached)
+            onImageBitmapReady(attachment.id, cached)
+            return@produceState
+        }
+        FullScreenAttachmentImageMemoryCache.get(attachment.id)?.let { cached ->
+            FullScreenImageMemoryCache.put(bitmapKey, cached)
+            value = KeyedImageBitmap(bitmapKey, cached)
+            onImageBitmapReady(attachment.id, cached)
+            return@produceState
+        }
+        MediaPreviewMemoryCache.get(previewKey)?.let { preview ->
+            value = KeyedImageBitmap(previewKey, preview)
+        } ?: run {
+            value = null
+        }
         if (contentBytes == null && localUri == null) return@produceState
-        value = withContext(Dispatchers.Default) {
-            loadImagePreview(
-                localUri = localUri,
-                contentBytes = contentBytes,
-                maxSidePx = CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX,
-            )?.decodeToImageBitmapOrNull()
-        }?.also { bitmap -> FullScreenImageMemoryCache.put(bitmapKey, bitmap) }
-            ?.let { bitmap -> KeyedImageBitmap(bitmapKey, bitmap) }
+        val decodedFullBitmap = FullScreenImageDecodeLimiter.withPermit {
+            withContext(Dispatchers.Default) {
+                loadImagePreview(
+                    localUri = localUri,
+                    contentBytes = contentBytes,
+                    maxSidePx = CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX,
+                )?.decodeToImageBitmapOrNull()
+            }
+        }
+        if (decodedFullBitmap != null) {
+            FullScreenAttachmentImageMemoryCache.put(attachment.id, decodedFullBitmap)
+            FullScreenImageMemoryCache.put(bitmapKey, decodedFullBitmap)
+            value = KeyedImageBitmap(bitmapKey, decodedFullBitmap)
+            onImageBitmapReady(attachment.id, decodedFullBitmap)
+        }
     }
-    return imageBitmap?.takeIf { keyed -> keyed.key == bitmapKey }?.bitmap
+    return imageBitmap
+        ?.takeIf { keyed -> keyed.key == bitmapKey || keyed.key == previewKey }
+        ?.bitmap
+        ?: initialBitmap?.bitmap
 }
 
 @Composable
 private fun rememberOptionalAttachmentImageBitmap(
     attachment: ChatAttachment?,
+    imageBitmapSeed: ImageBitmap?,
+    onImageBitmapReady: (String, ImageBitmap) -> Unit,
 ): ImageBitmap? {
     val contentBytes = attachment?.contentBytes
     val localUri = attachment?.localUri
@@ -2749,30 +2917,77 @@ private fun rememberOptionalAttachmentImageBitmap(
         prefix = "full-image",
         maxSidePx = CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX,
     ).orEmpty()
+    val previewKey = attachment?.previewCacheKey(
+        prefix = "image",
+        maxSidePx = CHAT_IMAGE_PREVIEW_MAX_SIDE_PX,
+    ).orEmpty()
+    val initialBitmap = imageBitmapSeed?.takeIf { attachment != null }?.let { bitmap ->
+        KeyedImageBitmap(bitmapKey, bitmap)
+    } ?: FullScreenImageMemoryCache.get(bitmapKey)?.let { bitmap ->
+        KeyedImageBitmap(bitmapKey, bitmap)
+    } ?: attachment?.id?.let(FullScreenAttachmentImageMemoryCache::get)?.let { bitmap ->
+        KeyedImageBitmap(bitmapKey, bitmap)
+    } ?: MediaPreviewMemoryCache.get(previewKey)?.let { bitmap ->
+        KeyedImageBitmap(previewKey, bitmap)
+    }
     val imageBitmap by produceState<KeyedImageBitmap?>(
-        initialValue = FullScreenImageMemoryCache.get(bitmapKey)?.let { bitmap ->
-            KeyedImageBitmap(bitmapKey, bitmap)
-        },
-        key1 = attachment?.id,
-        key2 = localUri,
-        key3 = contentBytes,
+        initialBitmap,
+        attachment?.id,
+        localUri,
+        contentBytes,
+        imageBitmapSeed,
     ) {
-        FullScreenImageMemoryCache.get(bitmapKey)?.let { cached ->
-            value = KeyedImageBitmap(bitmapKey, cached)
+        if (attachment == null) {
+            value = null
             return@produceState
         }
-        value = null
-        if (attachment == null || (contentBytes == null && localUri == null)) return@produceState
-        value = withContext(Dispatchers.Default) {
-            loadImagePreview(
-                localUri = localUri,
-                contentBytes = contentBytes,
-                maxSidePx = CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX,
-            )?.decodeToImageBitmapOrNull()
-        }?.also { bitmap -> FullScreenImageMemoryCache.put(bitmapKey, bitmap) }
-            ?.let { bitmap -> KeyedImageBitmap(bitmapKey, bitmap) }
+        if (value?.key != bitmapKey && value?.key != previewKey) {
+            value = initialBitmap
+        }
+        imageBitmapSeed?.let { seeded ->
+            FullScreenAttachmentImageMemoryCache.put(attachment.id, seeded)
+            FullScreenImageMemoryCache.put(bitmapKey, seeded)
+            value = KeyedImageBitmap(bitmapKey, seeded)
+            return@produceState
+        }
+        FullScreenImageMemoryCache.get(bitmapKey)?.let { cached ->
+            FullScreenAttachmentImageMemoryCache.put(attachment.id, cached)
+            value = KeyedImageBitmap(bitmapKey, cached)
+            onImageBitmapReady(attachment.id, cached)
+            return@produceState
+        }
+        FullScreenAttachmentImageMemoryCache.get(attachment.id)?.let { cached ->
+            FullScreenImageMemoryCache.put(bitmapKey, cached)
+            value = KeyedImageBitmap(bitmapKey, cached)
+            onImageBitmapReady(attachment.id, cached)
+            return@produceState
+        }
+        MediaPreviewMemoryCache.get(previewKey)?.let { preview ->
+            value = KeyedImageBitmap(previewKey, preview)
+        } ?: run {
+            value = null
+        }
+        if (contentBytes == null && localUri == null) return@produceState
+        val decodedFullBitmap = FullScreenImageDecodeLimiter.withPermit {
+            withContext(Dispatchers.Default) {
+                loadImagePreview(
+                    localUri = localUri,
+                    contentBytes = contentBytes,
+                    maxSidePx = CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX,
+                )?.decodeToImageBitmapOrNull()
+            }
+        }
+        if (decodedFullBitmap != null) {
+            FullScreenAttachmentImageMemoryCache.put(attachment.id, decodedFullBitmap)
+            FullScreenImageMemoryCache.put(bitmapKey, decodedFullBitmap)
+            value = KeyedImageBitmap(bitmapKey, decodedFullBitmap)
+            onImageBitmapReady(attachment.id, decodedFullBitmap)
+        }
     }
-    return imageBitmap?.takeIf { keyed -> keyed.key == bitmapKey }?.bitmap
+    return imageBitmap
+        ?.takeIf { keyed -> keyed.key == bitmapKey || keyed.key == previewKey }
+        ?.bitmap
+        ?: initialBitmap?.bitmap
 }
 
 @Composable
@@ -2794,8 +3009,10 @@ private fun rememberVideoThumbnailBitmap(
         }
         value = null
         if (attachment.kind != ChatAttachmentKind.Video || localUri == null) return@produceState
-        value = withContext(Dispatchers.Default) {
-            loadVideoThumbnail(localUri, CHAT_VIDEO_THUMBNAIL_MAX_SIDE_PX)?.decodeToImageBitmapOrNull()
+        value = MediaPreviewDecodeLimiter.withPermit {
+            withContext(Dispatchers.Default) {
+                loadVideoThumbnail(localUri, CHAT_VIDEO_THUMBNAIL_MAX_SIDE_PX)?.decodeToImageBitmapOrNull()
+            }
         }?.also { bitmap -> MediaPreviewMemoryCache.put(cacheKey, bitmap) }
             ?.let { bitmap -> KeyedImageBitmap(cacheKey, bitmap) }
     }
@@ -2838,6 +3055,23 @@ private object FullScreenImageMemoryCache {
     }
 }
 
+private object FullScreenAttachmentImageMemoryCache {
+    private const val MAX_ITEMS = 12
+    private val cache = LinkedHashMap<String, ImageBitmap>()
+
+    fun get(attachmentId: String): ImageBitmap? = cache[attachmentId]
+
+    fun put(attachmentId: String, bitmap: ImageBitmap) {
+        if (attachmentId.isBlank()) return
+        cache.remove(attachmentId)
+        cache[attachmentId] = bitmap
+        while (cache.size > MAX_ITEMS) {
+            val oldestKey = cache.keys.firstOrNull() ?: break
+            cache.remove(oldestKey)
+        }
+    }
+}
+
 private object MediaPreviewMemoryCache {
     private const val MAX_ITEMS = 160
     private val cache = LinkedHashMap<String, ImageBitmap>()
@@ -2855,6 +3089,22 @@ private object MediaPreviewMemoryCache {
     }
 }
 
+private object MediaPreviewDecodeLimiter {
+    private val semaphore = Semaphore(CHAT_MEDIA_PREVIEW_DECODE_PARALLELISM)
+
+    suspend fun <T> withPermit(block: suspend () -> T): T {
+        return semaphore.withPermit { block() }
+    }
+}
+
+private object FullScreenImageDecodeLimiter {
+    private val semaphore = Semaphore(CHAT_FULL_SCREEN_IMAGE_DECODE_PARALLELISM)
+
+    suspend fun <T> withPermit(block: suspend () -> T): T {
+        return semaphore.withPermit { block() }
+    }
+}
+
 private fun ChatAttachment.isGridMedia(): Boolean {
     return kind == ChatAttachmentKind.Image || kind == ChatAttachmentKind.Video
 }
@@ -2867,13 +3117,15 @@ private fun Offset.coerceToBounds(maxX: Float, maxY: Float): Offset {
 }
 
 private const val MAX_MEDIA_GRID_ITEMS = 10
-private const val FULL_SCREEN_SWIPE_THRESHOLD_PX = 80f
+private const val FULL_SCREEN_GALLERY_BITMAP_CACHE_ITEMS = 8
 private const val FULL_SCREEN_GALLERY_SLIDE_DURATION_MS = 220
 private const val FULL_SCREEN_IMAGE_SETTLE_DURATION_MS = 180
 private const val FULL_SCREEN_GALLERY_SLIDE_MARGIN_PX = 48f
 private const val CHAT_IMAGE_PREVIEW_MAX_SIDE_PX = 720
 private const val CHAT_FULL_SCREEN_IMAGE_MAX_SIDE_PX = 2560
 private const val CHAT_VIDEO_THUMBNAIL_MAX_SIDE_PX = 480
+private const val CHAT_MEDIA_PREVIEW_DECODE_PARALLELISM = 1
+private const val CHAT_FULL_SCREEN_IMAGE_DECODE_PARALLELISM = 1
 
 private data class VoicePlaybackProgress(
     val positionMillis: Long,
@@ -2956,6 +3208,59 @@ private fun ChatAttachment.displayName(): String {
     }
 }
 
+private fun ChatAttachment.displayNameWithLoadState(): String {
+    return if (localUri == null && loadState != ChatAttachmentLoadState.Ready) {
+        "${displayName()} - ${loadState.detailText()}"
+    } else {
+        displayName()
+    }
+}
+
+private fun ChatAttachmentLoadState.canRequestDownload(): Boolean {
+    return this == ChatAttachmentLoadState.NotStarted ||
+        this == ChatAttachmentLoadState.WaitingForTap ||
+        this == ChatAttachmentLoadState.Failed
+}
+
+private fun ChatAttachmentLoadState.shortLabel(): String {
+    return when (this) {
+        ChatAttachmentLoadState.NotStarted,
+        ChatAttachmentLoadState.WaitingForTap -> "GET"
+        ChatAttachmentLoadState.CheckingCache -> "CACHE"
+        ChatAttachmentLoadState.Downloading -> "DOWN"
+        ChatAttachmentLoadState.Downloaded -> "DONE"
+        ChatAttachmentLoadState.Decrypting -> "DEC"
+        ChatAttachmentLoadState.Ready -> "FILE"
+        ChatAttachmentLoadState.Failed -> "ERR"
+    }
+}
+
+private fun ChatAttachmentLoadState.statusText(): String {
+    return when (this) {
+        ChatAttachmentLoadState.NotStarted,
+        ChatAttachmentLoadState.WaitingForTap -> "Tap to download"
+        ChatAttachmentLoadState.CheckingCache -> "Checking local cache"
+        ChatAttachmentLoadState.Downloading -> "Downloading"
+        ChatAttachmentLoadState.Downloaded -> "Downloaded"
+        ChatAttachmentLoadState.Decrypting -> "Downloaded, decrypting"
+        ChatAttachmentLoadState.Ready -> "Ready"
+        ChatAttachmentLoadState.Failed -> "Download failed"
+    }
+}
+
+private fun ChatAttachmentLoadState.detailText(): String {
+    return when (this) {
+        ChatAttachmentLoadState.NotStarted,
+        ChatAttachmentLoadState.WaitingForTap -> "waiting for tap"
+        ChatAttachmentLoadState.CheckingCache -> "checking cache"
+        ChatAttachmentLoadState.Downloading -> "downloading"
+        ChatAttachmentLoadState.Downloaded -> "downloaded"
+        ChatAttachmentLoadState.Decrypting -> "decrypting"
+        ChatAttachmentLoadState.Ready -> "ready"
+        ChatAttachmentLoadState.Failed -> "failed"
+    }
+}
+
 private fun Long.toReadableBytes(): String {
     if (this < 1024L) return "$this B"
     val kib = this / 1024.0
@@ -3014,6 +3319,7 @@ private fun MessagePreview() {
         onPasteClipboardAttachments = { false },
         onAttachmentsDropped = {},
         onRemoveAttachment = {},
+        onAttachmentDownloadClick = {},
         onLoadMoreMessages = {},
         onInviteUserClick = {},
     )

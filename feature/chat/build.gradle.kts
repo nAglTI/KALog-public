@@ -28,6 +28,8 @@ kotlin {
     sourceSets {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            implementation(libs.media3.exoplayer)
+            implementation(libs.media3.ui)
         }
         commonMain.dependencies {
             implementation(projects.core.crypto)

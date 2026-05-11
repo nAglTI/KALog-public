@@ -18,6 +18,7 @@ import org.debs.kalog.feature.chat.domain.usecase.LoadMoreChatMessagesUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatDetailsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
+import org.debs.kalog.feature.chat.domain.usecase.RequestChatAttachmentDownloadUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
 
 class ChatDetailsViewModel(
@@ -30,6 +31,7 @@ class ChatDetailsViewModel(
     private val inviteUserToChatUseCase: InviteUserToChatUseCase,
     private val acceptChatInvitationUseCase: AcceptChatInvitationUseCase,
     private val declineChatInvitationUseCase: DeclineChatInvitationUseCase,
+    private val requestChatAttachmentDownloadUseCase: RequestChatAttachmentDownloadUseCase,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatDetailsUiState())
     val state = _state.asStateFlow()
@@ -61,6 +63,7 @@ class ChatDetailsViewModel(
             is ChatDetailsEvent.AttachmentDraftSelected -> prepareAttachment(event.attachment)
             is ChatDetailsEvent.AttachmentDraftsSelected -> prepareAttachments(event.attachments)
             is ChatDetailsEvent.RemoveAttachmentDraft -> removeAttachment(event.attachmentId)
+            is ChatDetailsEvent.AttachmentDownloadClicked -> requestAttachmentDownload(event.attachmentId)
             ChatDetailsEvent.LoadMoreMessagesClicked -> loadMoreMessages()
             is ChatDetailsEvent.InviteUserConfirmed -> inviteUserToChat(event.userId)
             ChatDetailsEvent.AcceptInvitationClicked -> acceptInvitation()
@@ -240,6 +243,18 @@ class ChatDetailsViewModel(
         }
     }
 
+    private fun requestAttachmentDownload(attachmentId: String) {
+        viewModelScope.launch {
+            try {
+                requestChatAttachmentDownloadUseCase(chatId, attachmentId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                _effect.emit(ChatDetailsEffect.ShowError(DOWNLOAD_ATTACHMENT_ERROR))
+            }
+        }
+    }
+
     private fun loadMoreMessages() {
         val currentState = state.value
         if (currentState.isLoadingMoreMessages || !currentState.hasMoreMessages || loadMoreMessagesJob?.isActive == true) return
@@ -314,6 +329,7 @@ class ChatDetailsViewModel(
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 10
         private const val SEND_MESSAGE_ERROR = "Couldn't encrypt or send the message. Nothing was sent."
         private const val PREPARE_ATTACHMENT_ERROR = "Couldn't prepare or upload one or more attachments."
+        private const val DOWNLOAD_ATTACHMENT_ERROR = "Couldn't start attachment download."
         private const val WAIT_ATTACHMENTS_UPLOAD = "Wait until attachments finish uploading."
         private const val ATTACH_FILE_PENDING = "File picker is unavailable on this platform or was cancelled."
         private const val PICK_IMAGE_PENDING = "Image picker is unavailable on this platform or was cancelled."

@@ -11,6 +11,7 @@ import org.debs.kalog.core.crypto.GeneratedKeyPair
 import org.debs.kalog.core.crypto.GeneratedAttachmentKey
 import org.debs.kalog.feature.chat.data.cache.CachedChatAttachment
 import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
+import org.debs.kalog.feature.chat.data.cache.EncryptedCachedAttachmentPart
 import org.debs.kalog.feature.chat.data.cache.NoOpChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
@@ -22,6 +23,7 @@ import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.data.remote.*
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
+import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -1486,8 +1488,8 @@ class OfflineFirstChatRepositoryJvmTest {
         remoteDataSource.lastSentPayloads.forEach { payload ->
             val messagePayload = payload.chunks.single()
             assertTrue(messagePayload.contains(""""partIds":["attachment-1","attachment-2"]"""))
-            assertTrue(!messagePayload.contains(""""parts""""))
-            assertTrue(!messagePayload.contains(""""index""""))
+            assertTrue(messagePayload.contains(""""parts":[{"id":"attachment-1","index":0,"size":16777216"""))
+            assertTrue(messagePayload.contains(""""id":"attachment-2","index":1,"size":1"""))
         }
     }
 
@@ -1686,16 +1688,18 @@ class OfflineFirstChatRepositoryJvmTest {
                         .single()
                 }
                 .first { loadedAttachment ->
-                    loadedAttachment.contentBytes?.decodeToString() == "image-bytes" &&
-                        loadedAttachment.localUri?.isNotBlank() == true
+                    loadedAttachment.localUri?.let { localUri ->
+                        localUri.isNotBlank() &&
+                            attachmentFileCache.readBytes(localUri)?.decodeToString() == "image-bytes"
+                    } == true
                 }
         }
-        assertEquals("image-bytes", cachedAttachment.contentBytes?.decodeToString())
+        assertEquals(null, cachedAttachment.contentBytes)
         assertTrue(cachedAttachment.localUri?.isNotBlank() == true)
     }
 
     @Test
-    fun openChat_downloadsDecryptsAndAssemblesChunkedIncomingAttachments() = runBlocking {
+    fun requestAttachmentDownload_downloadsDecryptsAndAssemblesChunkedIncomingAttachments() = runBlocking {
         val chatId = "chat-1"
         val attachmentPayload =
             """{"messageText":"file","attachments":[{"id":"attachment-1","type":"file","key":"chacha20-poly1305-key-1","name":"big.bin","mimeType":"application/octet-stream","size":11,"chunkSize":6,"parts":[{"id":"attachment-1","index":0,"size":6,"key":"chacha20-poly1305-key-1"},{"id":"attachment-2","index":1,"size":5,"key":"chacha20-poly1305-key-2"}]}]}"""
@@ -1752,6 +1756,25 @@ class OfflineFirstChatRepositoryJvmTest {
         )
 
         repository.openChat(chatId)
+
+        val waitingAttachment = withTimeout(1_000) {
+            repository.observeChat(chatId)
+                .filterNotNull()
+                .map { thread ->
+                    thread.messages
+                        .filterIsInstance<ChatMessage.User>()
+                        .single()
+                        .attachments
+                        .single()
+                }
+                .first { loadedAttachment ->
+                    loadedAttachment.localUri == null &&
+                        loadedAttachment.loadState == ChatAttachmentLoadState.WaitingForTap
+                }
+        }
+        assertEquals("big.bin", waitingAttachment.name)
+
+        repository.requestAttachmentDownload(chatId, "attachment-1")
 
         val cachedAttachment = withTimeout(1_000) {
             repository.observeChat(chatId)
@@ -3100,6 +3123,25 @@ private class FakeChatAttachmentFileCache : ChatAttachmentFileCache {
         return cachedAttachment
     }
 
+    override suspend fun putEncrypted(
+        attachmentId: String,
+        fileName: String?,
+        mimeType: String?,
+        encryptedBytes: ByteArray,
+        plainSizeBytes: Long?,
+        decryptionKey: String,
+    ): CachedChatAttachment {
+        val bytes = encryptedBytes.decryptFakeAttachment(decryptionKey)
+        return put(
+            attachmentId = attachmentId,
+            fileName = fileName,
+            mimeType = mimeType,
+            bytes = bytes,
+        ).copy(sizeBytes = plainSizeBytes ?: bytes.size.toLong()).also { cached ->
+            cachedAttachments[attachmentId] = cached
+        }
+    }
+
     override suspend fun readBytes(localUri: String): ByteArray? {
         return cachedBytes[localUri]
     }
@@ -3128,6 +3170,25 @@ private class FakeChatAttachmentFileCache : ChatAttachmentFileCache {
         )
     }
 
+    override suspend fun putEncryptedFromChunks(
+        attachmentId: String,
+        fileName: String?,
+        mimeType: String?,
+        plainSizeBytes: Long?,
+        chunks: suspend (suspend (EncryptedCachedAttachmentPart) -> Unit) -> Unit,
+    ): CachedChatAttachment {
+        val assembledBytes = mutableListOf<Byte>()
+        chunks { part -> assembledBytes += part.encryptedBytes.decryptFakeAttachment(part.decryptionKey).asIterable() }
+        return put(
+            attachmentId = attachmentId,
+            fileName = fileName,
+            mimeType = mimeType,
+            bytes = assembledBytes.toByteArray(),
+        ).copy(sizeBytes = plainSizeBytes ?: assembledBytes.size.toLong()).also { cached ->
+            cachedAttachments[attachmentId] = cached
+        }
+    }
+
     override suspend fun clearAll(): Int {
         val count = cachedAttachments.size
         cachedAttachments.clear()
@@ -3137,6 +3198,15 @@ private class FakeChatAttachmentFileCache : ChatAttachmentFileCache {
 
     override suspend fun clearOlderThan(ageMillis: Long): Int {
         return 0
+    }
+}
+
+private fun ByteArray.decryptFakeAttachment(key: String): ByteArray {
+    val prefix = "encrypted-with-$key:".encodeToByteArray()
+    return if (size >= prefix.size && copyOfRange(0, prefix.size).contentEquals(prefix)) {
+        copyOfRange(prefix.size, size)
+    } else {
+        this
     }
 }
 

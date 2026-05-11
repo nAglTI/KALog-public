@@ -163,6 +163,9 @@ fun ChatDetailsRoute(
         onRemoveAttachment = { attachmentId ->
             viewModel.onEvent(ChatDetailsEvent.RemoveAttachmentDraft(attachmentId))
         },
+        onAttachmentDownloadClick = { attachmentId ->
+            viewModel.onEvent(ChatDetailsEvent.AttachmentDownloadClicked(attachmentId))
+        },
         onLoadMoreMessages = {
             viewModel.onEvent(ChatDetailsEvent.LoadMoreMessagesClicked)
         },

@@ -43,6 +43,7 @@ import javafx.scene.media.MediaPlayer
 import javafx.scene.media.MediaView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.debs.kalog.feature.chat.data.cache.SecureJvmAttachmentStore
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 
@@ -150,15 +151,13 @@ private fun Image.toClipboardImageAttachment(): ChatAttachment? {
         stream.toByteArray()
     }
     if (bytes.isEmpty()) return null
-    val file = Files.createTempFile("kalog-clipboard-", ".png").toFile()
-    file.writeBytes(bytes)
     return ChatAttachment(
         id = UUID.randomUUID().toString(),
         kind = ChatAttachmentKind.Image,
         name = "clipboard-image.png",
         mimeType = "image/png",
         sizeBytes = bytes.size.toLong(),
-        localUri = file.toURI().toString(),
+        localUri = null,
         contentBytes = bytes,
     )
 }
@@ -181,6 +180,7 @@ private fun String.hasImageExtension(): Boolean {
 }
 
 internal actual fun openLocalAttachment(localUri: String): Boolean {
+    if (SecureJvmAttachmentStore.isSecureUri(localUri)) return false
     return runCatching {
         if (!Desktop.isDesktopSupported()) return false
         val file = File(URI(localUri))
@@ -214,6 +214,10 @@ internal actual fun loadImagePreview(
     return runCatching {
         val source = when {
             contentBytes != null -> ByteArrayInputStream(contentBytes).use(ImageIO::read)
+            localUri != null && SecureJvmAttachmentStore.isSecureUri(localUri) ->
+                SecureJvmAttachmentStore.readAll(localUri)?.let { bytes ->
+                    ByteArrayInputStream(bytes).use(ImageIO::read)
+                }
             localUri != null -> ImageIO.read(File(URI(localUri)))
             else -> null
         } ?: return@runCatching null
@@ -247,6 +251,7 @@ internal actual fun PlatformVideoPlayer(
     localUri: String,
     modifier: Modifier,
 ) {
+    if (SecureJvmAttachmentStore.isSecureUri(localUri)) return
     var mediaPlayer: MediaPlayer? = null
     SwingPanel(
         modifier = modifier,
@@ -296,9 +301,14 @@ private object DesktopAudioPlayer {
         onFinished: () -> Unit,
     ): Boolean {
         stop()
-        val file = runCatching { File(URI(localUri)) }.getOrNull() ?: return false
         val clip = runCatching {
-            val audioInputStream = AudioSystem.getAudioInputStream(file)
+            val audioInputStream = if (SecureJvmAttachmentStore.isSecureUri(localUri)) {
+                val bytes = SecureJvmAttachmentStore.readAll(localUri) ?: return false
+                AudioSystem.getAudioInputStream(ByteArrayInputStream(bytes))
+            } else {
+                val file = File(URI(localUri))
+                AudioSystem.getAudioInputStream(file)
+            }
             AudioSystem.getClip().apply {
                 open(audioInputStream)
                 start()
@@ -421,8 +431,6 @@ private class ActiveDesktopVoiceRecorder(
         }
 
         val wavBytes = pcmBytes.toWavBytes(format)
-        val file = Files.createTempFile("kalog-voice-", ".wav").toFile()
-        file.writeBytes(wavBytes)
         val durationMillis = (System.currentTimeMillis() - startedAtMillis).coerceAtLeast(0L)
 
         return VoiceRecordingResult.Finished(
@@ -432,7 +440,7 @@ private class ActiveDesktopVoiceRecorder(
                 name = "voice.wav",
                 mimeType = "audio/wav",
                 sizeBytes = wavBytes.size.toLong(),
-                localUri = file.toURI().toString(),
+                localUri = null,
                 contentBytes = wavBytes,
                 durationMillis = durationMillis,
             ),

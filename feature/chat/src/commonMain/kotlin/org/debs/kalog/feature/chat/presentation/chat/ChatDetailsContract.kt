@@ -61,6 +61,8 @@ sealed interface ChatDetailsEvent {
 
     data class RemoveAttachmentDraft(val attachmentId: String) : ChatDetailsEvent
 
+    data class AttachmentDownloadClicked(val attachmentId: String) : ChatDetailsEvent
+
     data object LoadMoreMessagesClicked : ChatDetailsEvent
 
     data class InviteUserConfirmed(val userId: String) : ChatDetailsEvent

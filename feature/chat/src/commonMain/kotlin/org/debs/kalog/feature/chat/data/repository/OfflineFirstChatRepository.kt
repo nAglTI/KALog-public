@@ -10,6 +10,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
@@ -30,6 +31,7 @@ import org.debs.kalog.core.crypto.GeneratedKeyPair
 import org.debs.kalog.feature.chat.data.CURRENT_USER_DISPLAY_NAME
 import org.debs.kalog.feature.chat.data.cache.CachedChatAttachment
 import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
+import org.debs.kalog.feature.chat.data.cache.EncryptedCachedAttachmentPart
 import org.debs.kalog.feature.chat.data.cache.NoOpChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
@@ -52,6 +54,7 @@ import org.debs.kalog.feature.chat.domain.model.AvatarSpec
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentEncryptionSpec
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
+import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentPart
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.ChatParticipant
@@ -84,10 +87,14 @@ internal class OfflineFirstChatRepository(
     private val syncEnabled = MutableStateFlow(true)
     private val nicknameVersion = MutableStateFlow(0)
     private val cachedAttachmentFiles = MutableStateFlow<Map<String, CachedChatAttachment>>(emptyMap())
+    private val attachmentLoadStates = MutableStateFlow<Map<String, ChatAttachmentLoadState>>(emptyMap())
     private val attachmentDownloadScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val attachmentDownloadMutex = Mutex()
+    private val attachmentCacheCheckSemaphore = Semaphore(1)
     private val attachmentDownloadSemaphore = Semaphore(2)
     private val downloadingAttachmentIds = mutableSetOf<String>()
+    private val attachmentDownloadJobsByChat = mutableMapOf<String, MutableMap<String, Job>>()
+    private var activeAttachmentChatId: String? = null
 
     override suspend fun startSession() {
         syncEnabled.value = true
@@ -156,27 +163,32 @@ internal class OfflineFirstChatRepository(
         chatPreferencesDataSource.clearAll()
         chatKeyStore.clearAll()
         attachmentFileCache.clearAll()
-        attachmentDownloadScope.coroutineContext.cancelChildren()
-        attachmentDownloadMutex.withLock {
-            downloadingAttachmentIds.clear()
-        }
+        cancelAttachmentDownloads()
         cachedAttachmentFiles.value = emptyMap()
+        attachmentLoadStates.value = emptyMap()
         nicknameVersion.value = nicknameVersion.value + 1
     }
 
     override suspend fun clearCachedAttachments(): Int {
         return attachmentFileCache.clearAll().also { clearedCount ->
-            if (clearedCount > 0) cachedAttachmentFiles.value = emptyMap()
+            if (clearedCount > 0) {
+                cachedAttachmentFiles.value = emptyMap()
+                attachmentLoadStates.value = emptyMap()
+            }
         }
     }
 
     override suspend fun clearCachedAttachmentsOlderThan(ageMillis: Long): Int {
         return attachmentFileCache.clearOlderThan(ageMillis).also { clearedCount ->
-            if (clearedCount > 0) cachedAttachmentFiles.value = emptyMap()
+            if (clearedCount > 0) {
+                cachedAttachmentFiles.value = emptyMap()
+                attachmentLoadStates.value = emptyMap()
+            }
         }
     }
 
     override suspend fun closeChat() {
+        cancelAttachmentDownloads()
         chatPreferencesDataSource.clearLastOpenedChatId()
     }
 
@@ -195,7 +207,8 @@ internal class OfflineFirstChatRepository(
         paginationStates,
         nicknameVersion,
         cachedAttachmentFiles,
-    ) { threads, states, _, cachedFiles ->
+        attachmentLoadStates,
+    ) { threads, states, _, cachedFiles, loadStates ->
         val thread = threads.firstOrNull { it.id == chatId } ?: return@combine null
         val paginationState = states[chatId] ?: MessagePaginationState()
         val domainThread = thread.toDomain(
@@ -204,6 +217,7 @@ internal class OfflineFirstChatRepository(
             chatMessageCipher = chatMessageCipher,
             chatPreferencesDataSource = chatPreferencesDataSource,
             cachedAttachmentFiles = cachedFiles,
+            attachmentLoadStates = loadStates,
             loadAttachmentFiles = false,
         )
         scheduleAttachmentDownloads(domainThread)
@@ -211,40 +225,99 @@ internal class OfflineFirstChatRepository(
     }
 
     private fun scheduleAttachmentDownloads(thread: ChatThread) {
+        if (activeAttachmentChatId != thread.id) return
+        val knownLoadStates = attachmentLoadStates.value
         thread.messages
+            .asReversed()
             .filterIsInstance<ChatMessage.User>()
             .flatMap { message -> message.attachments }
             .filter { attachment ->
                 attachment.localUri == null &&
-                    (attachment.decryptionKey != null || attachment.parts.any { part -> part.key != null })
+                    (attachment.decryptionKey != null || attachment.parts.any { part -> part.key != null }) &&
+                    attachment.shouldScheduleAutomaticAttachmentLoad(knownLoadStates)
             }
+            .take(AUTOMATIC_ATTACHMENT_SCHEDULE_BATCH_SIZE)
             .forEach { attachment ->
-                attachmentDownloadScope.launch {
-                    val shouldDownload = attachmentDownloadMutex.withLock {
-                        if (attachment.id in downloadingAttachmentIds) {
-                            false
-                        } else {
-                            downloadingAttachmentIds += attachment.id
-                            true
-                        }
-                    }
-                    if (!shouldDownload) return@launch
+                scheduleAttachmentDownload(
+                    chatId = thread.id,
+                    attachment = attachment,
+                    userInitiated = false,
+                )
+            }
+    }
 
-                    try {
-                        attachmentDownloadSemaphore.withPermit {
-                            val cachedFile = attachmentFileCache.get(attachment.id)
-                                ?: downloadAndCacheAttachment(attachment)
-                            if (cachedFile != null) {
-                                rememberCachedAttachmentFile(attachment.id, cachedFile)
-                            }
-                        }
-                    } finally {
-                        attachmentDownloadMutex.withLock {
-                            downloadingAttachmentIds -= attachment.id
-                        }
+    private fun scheduleAttachmentDownload(
+        chatId: String,
+        attachment: ChatAttachment,
+        userInitiated: Boolean,
+    ) {
+        attachmentDownloadScope.launch {
+            val currentJob = currentCoroutineContext()[Job] ?: return@launch
+            val shouldStart = attachmentDownloadMutex.withLock {
+                if (activeAttachmentChatId != chatId || attachment.id in downloadingAttachmentIds) {
+                    false
+                } else {
+                    downloadingAttachmentIds += attachment.id
+                    attachmentDownloadJobsByChat
+                        .getOrPut(chatId) { mutableMapOf() }[attachment.id] = currentJob
+                    true
+                }
+            }
+            if (!shouldStart) return@launch
+
+            try {
+                val cachedFile = attachmentCacheCheckSemaphore.withPermit {
+                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.CheckingCache)
+                    attachmentFileCache.get(attachment)
+                }
+                if (cachedFile != null) {
+                    rememberCachedAttachmentFile(attachment.id, cachedFile)
+                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Ready)
+                    return@launch
+                }
+
+                if (!userInitiated && attachment.requiresExplicitDownload()) {
+                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.WaitingForTap)
+                    return@launch
+                }
+
+                attachmentDownloadSemaphore.withPermit {
+                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloading)
+                    val cachedFile = downloadAndCacheAttachment(attachment)
+                    if (cachedFile != null) {
+                        rememberCachedAttachmentFile(attachment.id, cachedFile)
+                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Ready)
+                    } else {
+                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Failed)
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Failed)
+            } finally {
+                attachmentDownloadMutex.withLock {
+                    downloadingAttachmentIds -= attachment.id
+                    attachmentDownloadJobsByChat[chatId]?.remove(attachment.id)
+                    if (attachmentDownloadJobsByChat[chatId]?.isEmpty() == true) {
+                        attachmentDownloadJobsByChat.remove(chatId)
                     }
                 }
             }
+        }
+    }
+
+    private fun updateAttachmentLoadState(
+        attachmentId: String,
+        state: ChatAttachmentLoadState,
+    ) {
+        attachmentLoadStates.update { current ->
+            if (current[attachmentId] == state) {
+                current
+            } else {
+                current + (attachmentId to state)
+            }
+        }
     }
 
     private suspend fun rememberCachedAttachmentFile(
@@ -258,42 +331,121 @@ internal class OfflineFirstChatRepository(
 
     private suspend fun downloadAndCacheAttachment(attachment: ChatAttachment): CachedChatAttachment? {
         val key = attachment.decryptionKey ?: attachment.parts.firstNotNullOfOrNull(ChatAttachmentPart::key) ?: return null
-        return runCatching {
-            if (attachment.parts.isEmpty()) {
-                val encryptedBytes = remoteDataSource.downloadAttachment(attachment.id)
-                val decryptedBytes = encryptionService.decryptAttachment(encryptedBytes, key)
-                attachmentFileCache.put(
-                    attachmentId = attachment.id,
-                    fileName = attachment.name,
-                    mimeType = attachment.mimeType,
-                    bytes = decryptedBytes,
-                )
-            } else {
-                attachmentFileCache.putFromChunks(
-                    attachmentId = attachment.id,
-                    fileName = attachment.name,
-                    mimeType = attachment.mimeType,
-                ) { append ->
-                    attachment.parts
-                        .sortedBy(ChatAttachmentPart::index)
-                        .forEach { part ->
-                            val partKey = part.key ?: key
-                            val encryptedBytes = remoteDataSource.downloadAttachment(part.id)
-                            val decryptedBytes = encryptionService.decryptAttachment(encryptedBytes, partKey)
-                            append(decryptedBytes)
-                        }
-                }
+        return if (attachment.parts.isEmpty()) {
+            val encryptedBytes = remoteDataSource.downloadAttachment(attachment.id)
+            updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloaded)
+            updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Decrypting)
+            attachmentFileCache.putEncrypted(
+                attachmentId = attachment.id,
+                fileName = attachment.name,
+                mimeType = attachment.mimeType,
+                encryptedBytes = encryptedBytes,
+                plainSizeBytes = attachment.sizeBytes,
+                decryptionKey = key,
+            )
+        } else {
+            attachmentFileCache.putEncryptedFromChunks(
+                attachmentId = attachment.id,
+                fileName = attachment.name,
+                mimeType = attachment.mimeType,
+                plainSizeBytes = attachment.sizeBytes,
+            ) { append ->
+                attachment.parts
+                    .sortedBy(ChatAttachmentPart::index)
+                    .forEach { part ->
+                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloading)
+                        val partKey = part.key ?: key
+                        val encryptedBytes = remoteDataSource.downloadAttachment(part.id)
+                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloaded)
+                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Decrypting)
+                        val plainSizeBytes = part.sizeBytes
+                            ?: attachment.inferredPartPlainSize(part.index)
+                            ?: encryptionService.decryptAttachment(encryptedBytes, partKey).size.toLong()
+                        append(
+                            EncryptedCachedAttachmentPart(
+                                id = part.id,
+                                index = part.index,
+                                encryptedBytes = encryptedBytes,
+                                plainSizeBytes = plainSizeBytes,
+                                decryptionKey = partKey,
+                            ),
+                        )
+                    }
             }
-        }.getOrNull()
+        }
+    }
+
+    override suspend fun requestAttachmentDownload(chatId: String, attachmentId: String) {
+        val attachment = findAttachmentInChat(chatId, attachmentId) ?: return
+        activateAttachmentChat(chatId)
+        scheduleAttachmentDownload(
+            chatId = chatId,
+            attachment = attachment,
+            userInitiated = true,
+        )
     }
 
     override suspend fun openChat(chatId: String) {
+        activateAttachmentChat(chatId)
         startSession()
         ensureUserSession()
         localDataSource.markChatOpened(chatId)
         chatPreferencesDataSource.saveLastOpenedChatId(chatId)
         syncChat(chatId)
         initializePaginationFromLoadedMessages(chatId)
+    }
+
+    private suspend fun activateAttachmentChat(chatId: String) {
+        val jobsToCancel = attachmentDownloadMutex.withLock {
+            if (activeAttachmentChatId == chatId) return
+            activeAttachmentChatId = chatId
+            val inactiveChats = attachmentDownloadJobsByChat.keys.filter { activeChatId -> activeChatId != chatId }
+            inactiveChats.flatMap { inactiveChatId ->
+                attachmentDownloadJobsByChat.remove(inactiveChatId)
+                    .orEmpty()
+                    .also { jobs -> downloadingAttachmentIds.removeAll(jobs.keys) }
+                    .values
+            }
+        }
+        jobsToCancel.forEach(Job::cancel)
+    }
+
+    private suspend fun cancelAttachmentDownloads() {
+        val jobsToCancel = attachmentDownloadMutex.withLock {
+            activeAttachmentChatId = null
+            val jobs = attachmentDownloadJobsByChat.values.flatMap { jobsByAttachment -> jobsByAttachment.values }
+            attachmentDownloadJobsByChat.clear()
+            downloadingAttachmentIds.clear()
+            jobs
+        }
+        jobsToCancel.forEach(Job::cancel)
+    }
+
+    private suspend fun findAttachmentInChat(
+        chatId: String,
+        attachmentId: String,
+    ): ChatAttachment? {
+        val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId } ?: return null
+        thread.messages
+            .filterNot { message -> message.isService }
+            .forEach { message ->
+                val payload = runCatching {
+                    val decryptedBody = if (message.encryptedChunks.isEmpty()) {
+                        ""
+                    } else {
+                        chatMessageCipher.decryptIncoming(
+                            chatId = chatId,
+                            chunks = message.encryptedChunks,
+                            isEncrypted = true,
+                        )
+                    }
+                    decryptedBody.toIncomingMessagePayload()
+                }.getOrNull()
+                payload?.attachments?.firstOrNull { attachment -> attachment.id == attachmentId }?.let { attachment ->
+                    return attachment
+                }
+            }
+        return null
     }
 
     override suspend fun loadMoreMessages(chatId: String): Boolean {
@@ -415,13 +567,15 @@ internal class OfflineFirstChatRepository(
             attachmentFileCache.readBytes(localUri)
         }
         plainBytes?.let { bytes ->
-            attachmentFileCache.put(
+            val encryptedBytes = encryptionService.encryptAttachment(bytes, generatedKey.key)
+            attachmentFileCache.putEncrypted(
                 attachmentId = uploadReservation.attachmentId,
                 fileName = attachment.name,
                 mimeType = attachment.mimeType,
-                bytes = bytes,
+                encryptedBytes = encryptedBytes,
+                plainSizeBytes = bytes.size.toLong(),
+                decryptionKey = generatedKey.key,
             )
-            val encryptedBytes = encryptionService.encryptAttachment(bytes, generatedKey.key)
             remoteDataSource.uploadAttachment(
                 attachmentId = uploadReservation.attachmentId,
                 uploadToken = uploadReservation.uploadToken,
@@ -435,6 +589,7 @@ internal class OfflineFirstChatRepository(
             id = uploadReservation.attachmentId,
             encryptionKeyId = uploadReservation.attachmentId,
             contentBytes = null,
+            localUri = null,
         )
         return PreparedChatAttachment(
             attachment = preparedAttachment,
@@ -456,6 +611,7 @@ internal class OfflineFirstChatRepository(
     ): PreparedChatAttachment {
         val firstReservation = remoteDataSource.initAttachmentUpload()
         val parts = mutableListOf<ChatAttachmentPart>()
+        val encryptedCacheParts = mutableListOf<EncryptedCachedAttachmentPart>()
         var offset = 0L
         var uploadedBytes = 0L
         var index = 0
@@ -495,6 +651,13 @@ internal class OfflineFirstChatRepository(
                 index = index,
                 sizeBytes = plainChunk.size.toLong(),
             )
+            encryptedCacheParts += EncryptedCachedAttachmentPart(
+                id = reservation.attachmentId,
+                index = index,
+                encryptedBytes = encryptedBytes,
+                plainSizeBytes = plainChunk.size.toLong(),
+                decryptionKey = key.key,
+            )
             uploadedBytes += plainChunk.size
             offset += plainChunk.size
             index += 1
@@ -508,8 +671,18 @@ internal class OfflineFirstChatRepository(
             id = firstReservation.attachmentId,
             encryptionKeyId = firstReservation.attachmentId,
             contentBytes = null,
+            localUri = null,
+            chunkSizeBytes = ATTACHMENT_UPLOAD_CHUNK_BYTES.toLong(),
             parts = parts,
         )
+        attachmentFileCache.putEncryptedFromChunks(
+            attachmentId = firstReservation.attachmentId,
+            fileName = attachment.name,
+            mimeType = attachment.mimeType,
+            plainSizeBytes = totalBytes,
+        ) { append ->
+            encryptedCacheParts.forEach { part -> append(part) }
+        }
         return PreparedChatAttachment(
             attachment = preparedAttachment,
             encryption = ChatAttachmentEncryptionSpec(
@@ -1342,6 +1515,14 @@ internal class OfflineFirstChatRepository(
                         sizeBytes = prepared.attachment.sizeBytes,
                         chunkSizeBytes = prepared.encryption.chunkSizeBytes,
                         partIds = prepared.encryption.parts.map(ChatAttachmentPart::id),
+                        parts = prepared.encryption.parts.map { part ->
+                            AttachmentPartPayload(
+                                id = part.id,
+                                index = part.index,
+                                sizeBytes = part.sizeBytes,
+                                key = part.key,
+                            )
+                        },
                     )
                 },
             ),
@@ -1478,6 +1659,7 @@ private fun String.toIncomingMessagePayload(): DecodedUserMessagePayload {
                     ChatAttachmentPart(
                         id = id,
                         index = index,
+                        sizeBytes = attachment.inferredPartPlainSize(index),
                     )
                 }
             }
@@ -1503,10 +1685,29 @@ private fun String.toIncomingMessagePayload(): DecodedUserMessagePayload {
                 sizeBytes = attachment.sizeBytes,
                 encryptionKeyId = attachmentId,
                 decryptionKey = attachment.key.ifBlank { null },
+                chunkSizeBytes = attachment.chunkSizeBytes,
                 parts = parts,
             )
         }.filter { attachment -> attachment.id.isNotBlank() },
     )
+}
+
+private fun IncomingAttachmentPayload.inferredPartPlainSize(index: Int): Long? {
+    val chunkSize = chunkSizeBytes ?: return null
+    val totalSize = sizeBytes ?: return null
+    if (index < 0 || chunkSize <= 0L || totalSize < 0L) return null
+    val chunkStart = chunkSize * index
+    if (chunkStart >= totalSize) return 0L
+    return minOf(chunkSize, totalSize - chunkStart)
+}
+
+private fun ChatAttachment.inferredPartPlainSize(index: Int): Long? {
+    val chunkSize = chunkSizeBytes ?: return null
+    val totalSize = sizeBytes ?: return null
+    if (index < 0 || chunkSize <= 0L || totalSize < 0L) return null
+    val chunkStart = chunkSize * index
+    if (chunkStart >= totalSize) return 0L
+    return minOf(chunkSize, totalSize - chunkStart)
 }
 
 private fun ChatAttachmentKind.toMessagePayloadType(): String {
@@ -1538,6 +1739,7 @@ private suspend fun LocalChatThread.toDomain(
     encryptionService: EncryptionService? = null,
     attachmentFileCache: ChatAttachmentFileCache = NoOpChatAttachmentFileCache,
     cachedAttachmentFiles: Map<String, CachedChatAttachment> = emptyMap(),
+    attachmentLoadStates: Map<String, ChatAttachmentLoadState> = emptyMap(),
     loadAttachmentFiles: Boolean = false,
 ): ChatThread {
     return ChatThread(
@@ -1558,6 +1760,7 @@ private suspend fun LocalChatThread.toDomain(
                 encryptionService = encryptionService,
                 attachmentFileCache = attachmentFileCache,
                 cachedAttachmentFiles = cachedAttachmentFiles,
+                attachmentLoadStates = attachmentLoadStates,
                 loadAttachmentFiles = loadAttachmentFiles,
             )
         },
@@ -1582,6 +1785,7 @@ private suspend fun LocalChatMessage.toDomain(
     encryptionService: EncryptionService? = null,
     attachmentFileCache: ChatAttachmentFileCache = NoOpChatAttachmentFileCache,
     cachedAttachmentFiles: Map<String, CachedChatAttachment> = emptyMap(),
+    attachmentLoadStates: Map<String, ChatAttachmentLoadState> = emptyMap(),
     loadAttachmentFiles: Boolean = false,
 ): ChatMessage? {
     if (isService) {
@@ -1622,7 +1826,7 @@ private suspend fun LocalChatMessage.toDomain(
         messagePayload.attachments.map { attachment ->
             cachedAttachmentFiles[attachment.id]?.let { cachedFile ->
                 attachment.withCachedFile(cachedFile.localUri, cachedFile.sizeBytes)
-            } ?: attachment
+            } ?: attachment.withLoadState(attachmentLoadStates[attachment.id])
         }
     }
     val resolvedSender = if (isMine == true || sender == CURRENT_USER_DISPLAY_NAME) {
@@ -1647,7 +1851,7 @@ private suspend fun ChatAttachment.withCachedDecryptedFile(
     encryptionService: EncryptionService,
     attachmentFileCache: ChatAttachmentFileCache,
 ): ChatAttachment {
-    val cachedFile = attachmentFileCache.get(id)
+    val cachedFile = attachmentFileCache.get(this)
     if (cachedFile != null) {
         return withCachedFile(cachedFile.localUri, cachedFile.sizeBytes)
     }
@@ -1662,7 +1866,43 @@ private fun ChatAttachment.withCachedFile(
         localUri = localUri,
         sizeBytes = sizeBytes ?: cachedSizeBytes,
         contentBytes = null,
+        loadState = ChatAttachmentLoadState.Ready,
     )
+}
+
+private fun ChatAttachment.withLoadState(
+    explicitState: ChatAttachmentLoadState?,
+): ChatAttachment {
+    return copy(loadState = explicitState ?: defaultLoadState())
+}
+
+private fun ChatAttachment.defaultLoadState(): ChatAttachmentLoadState {
+    return if (requiresExplicitDownload()) {
+        ChatAttachmentLoadState.WaitingForTap
+    } else {
+        ChatAttachmentLoadState.NotStarted
+    }
+}
+
+private fun ChatAttachment.requiresExplicitDownload(): Boolean {
+    return parts.isNotEmpty() ||
+        (sizeBytes != null && sizeBytes > EXPLICIT_ATTACHMENT_DOWNLOAD_THRESHOLD_BYTES)
+}
+
+private fun ChatAttachment.shouldScheduleAutomaticAttachmentLoad(
+    knownLoadStates: Map<String, ChatAttachmentLoadState>,
+): Boolean {
+    return when (knownLoadStates[id]) {
+        null,
+        ChatAttachmentLoadState.NotStarted -> true
+        ChatAttachmentLoadState.WaitingForTap,
+        ChatAttachmentLoadState.CheckingCache,
+        ChatAttachmentLoadState.Downloading,
+        ChatAttachmentLoadState.Downloaded,
+        ChatAttachmentLoadState.Decrypting,
+        ChatAttachmentLoadState.Ready,
+        ChatAttachmentLoadState.Failed -> false
+    }
 }
 
 private suspend fun decodeServiceMessageBody(
@@ -1756,6 +1996,9 @@ internal fun String.toDisplayTimestamp(): String {
 
     return this
 }
+
+private const val EXPLICIT_ATTACHMENT_DOWNLOAD_THRESHOLD_BYTES = 16L * 1024L * 1024L
+private const val AUTOMATIC_ATTACHMENT_SCHEDULE_BATCH_SIZE = 3
 
 private fun String.parseIsoTimestamp(): LocalDateTime? {
     val normalized = trim()

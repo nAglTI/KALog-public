@@ -41,6 +41,8 @@ interface ChatRepository {
         onUploadProgress: (bytesSent: Long, totalBytes: Long) -> Unit = { _, _ -> },
     ): PreparedChatAttachment
 
+    suspend fun requestAttachmentDownload(chatId: String, attachmentId: String)
+
     suspend fun createDirectChat(targetUserId: String): String
 
     suspend fun createGroupChat(publicKey: String? = null): String

@@ -39,6 +39,17 @@ enum class ChatAttachmentKind {
     Voice,
 }
 
+enum class ChatAttachmentLoadState {
+    NotStarted,
+    WaitingForTap,
+    CheckingCache,
+    Downloading,
+    Downloaded,
+    Decrypting,
+    Ready,
+    Failed,
+}
+
 data class ChatAttachment(
     val id: String,
     val kind: ChatAttachmentKind,
@@ -50,7 +61,9 @@ data class ChatAttachment(
     val durationMillis: Long? = null,
     val encryptionKeyId: String? = null,
     val decryptionKey: String? = null,
+    val chunkSizeBytes: Long? = null,
     val parts: List<ChatAttachmentPart> = emptyList(),
+    val loadState: ChatAttachmentLoadState = ChatAttachmentLoadState.NotStarted,
 ) {
     val uuid: String
         get() = id

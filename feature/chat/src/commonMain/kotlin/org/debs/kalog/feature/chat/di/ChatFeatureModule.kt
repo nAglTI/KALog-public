@@ -33,6 +33,7 @@ import org.debs.kalog.feature.chat.domain.usecase.ObserveChatDetailsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
+import org.debs.kalog.feature.chat.domain.usecase.RequestChatAttachmentDownloadUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RunChatSyncLoopUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SetGroupChatPublicKeyUseCase
@@ -75,11 +76,12 @@ val chatFeatureModule = module {
     factory { ObserveChatDetailsUseCase(get()) }
     factory { OpenChatUseCase(get()) }
     factory { PrepareChatAttachmentUseCase(get()) }
+    factory { RequestChatAttachmentDownloadUseCase(get()) }
     factory { SendChatMessageUseCase(get()) }
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
     factory { ChatListViewModel(get(), get(), get(), get()) }
     factory { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
-    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get()) }
+    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatInfoViewModel(chatId, get(), get(), get(), get()) }
 }

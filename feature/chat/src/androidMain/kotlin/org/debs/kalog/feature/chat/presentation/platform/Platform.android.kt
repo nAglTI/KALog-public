@@ -2,9 +2,11 @@ package org.debs.kalog.feature.chat.presentation.platform
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -13,12 +15,12 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
-import android.widget.MediaController
-import android.widget.VideoView
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -32,6 +34,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,12 +46,29 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.BaseDataSource
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.net.URI
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import org.debs.kalog.feature.chat.data.cache.SecureAndroidAttachmentStore
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 
@@ -94,32 +115,179 @@ internal actual fun loadVideoThumbnail(localUri: String, maxSidePx: Int): ByteAr
 }
 
 @Composable
+@OptIn(UnstableApi::class)
 internal actual fun PlatformVideoPlayer(
     localUri: String,
     modifier: Modifier,
 ) {
+    val player = remember(localUri) {
+        val context = AndroidChatPlatformBridge.requireContext()
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(ChatVideoMediaCodecSelector)
+        ExoPlayer.Builder(context, renderersFactory).build().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true,
+            )
+            val mediaItem = MediaItem.fromUri(Uri.parse(localUri))
+            if (SecureAndroidAttachmentStore.isSecureUri(localUri)) {
+                setMediaSource(
+                    ProgressiveMediaSource.Factory(SecureAttachmentExoDataSourceFactory())
+                        .createMediaSource(mediaItem),
+                )
+            } else {
+                setMediaItem(mediaItem)
+            }
+            playWhenReady = true
+            prepare()
+        }
+    }
+    DisposableEffect(player, localUri) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                Log.d(
+                    CHAT_VIDEO_PLAYER_TAG,
+                    "state=${playbackState.toPlayerStateName()} playWhenReady=${player.playWhenReady} uri=$localUri",
+                )
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                Log.d(CHAT_VIDEO_PLAYER_TAG, "isPlaying=$isPlaying uri=$localUri")
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e(CHAT_VIDEO_PLAYER_TAG, "Playback failed uri=$localUri", error)
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            VideoView(context).apply {
-                val controller = MediaController(context)
-                controller.setAnchorView(this)
-                setMediaController(controller)
-                setVideoURI(Uri.parse(localUri))
-                setOnPreparedListener { player ->
-                    player.isLooping = false
-                    start()
-                }
+            PlayerView(context).apply {
+                this.player = player
+                keepScreenOn = true
+                useController = true
+                controllerAutoShow = true
+                controllerHideOnTouch = true
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                setControllerShowTimeoutMs(3_000)
+                setEnableComposeSurfaceSyncWorkaround(true)
             }
         },
         update = { view ->
-            if (view.tag != localUri) {
-                view.tag = localUri
-                view.setVideoURI(Uri.parse(localUri))
-                view.start()
-            }
+            if (view.player !== player) view.player = player
         },
     )
+}
+
+private object ChatVideoMediaCodecSelector : MediaCodecSelector {
+    override fun getDecoderInfos(
+        mimeType: String,
+        requiresSecureDecoder: Boolean,
+        requiresTunnelingDecoder: Boolean,
+    ) = if (mimeType == MimeTypes.VIDEO_DOLBY_VISION) {
+        Log.d(CHAT_VIDEO_PLAYER_TAG, "Prefer HEVC base-layer fallback for Dolby Vision video.")
+        emptyList()
+    } else {
+        MediaCodecSelector.DEFAULT.getDecoderInfos(
+            mimeType,
+            requiresSecureDecoder,
+            requiresTunnelingDecoder,
+        )
+    }
+}
+
+private class SecureAttachmentExoDataSourceFactory : DataSource.Factory {
+    override fun createDataSource(): DataSource {
+        return SecureAttachmentExoDataSource()
+    }
+}
+
+private class SecureAttachmentExoDataSource : BaseDataSource(false) {
+    private var localUri: String? = null
+    private var reader: org.debs.kalog.feature.chat.data.cache.SecureAndroidAttachmentReader? = null
+    private var position: Long = 0L
+    private var bytesRemaining: Long = 0L
+    private var opened = false
+
+    override fun open(dataSpec: DataSpec): Long {
+        val uriString = dataSpec.uri.toString()
+        val entryReader = SecureAndroidAttachmentStore.openReader(uriString)
+            ?: throw IllegalStateException("Secure attachment is not registered: $uriString")
+        localUri = uriString
+        reader = entryReader
+        position = dataSpec.position
+        val totalSize = SecureAndroidAttachmentStore.sizeBytes(uriString)
+        bytesRemaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) {
+            ((totalSize ?: Long.MAX_VALUE) - position).coerceAtLeast(0L)
+        } else {
+            dataSpec.length
+        }
+        transferInitializing(dataSpec)
+        opened = true
+        transferStarted(dataSpec)
+        return bytesRemaining
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
+        val maxRead = minOf(length.toLong(), bytesRemaining).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val read = reader?.readAt(position, buffer, offset, maxRead) ?: return C.RESULT_END_OF_INPUT
+        if (read <= 0) return C.RESULT_END_OF_INPUT
+        position += read
+        if (bytesRemaining != Long.MAX_VALUE) {
+            bytesRemaining -= read
+        }
+        bytesTransferred(read)
+        return read
+    }
+
+    override fun getUri(): Uri? = localUri?.let(Uri::parse)
+
+    override fun close() {
+        localUri = null
+        reader = null
+        if (opened) {
+            opened = false
+            transferEnded()
+        }
+    }
+}
+
+private class SecureAttachmentMediaDataSource(
+    localUri: String,
+) : MediaDataSource() {
+    private val reader = SecureAndroidAttachmentStore.openReader(localUri)
+    private val sizeBytes = SecureAndroidAttachmentStore.sizeBytes(localUri) ?: 0L
+
+    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+        return reader?.readAt(position, buffer, offset, size) ?: -1
+    }
+
+    override fun getSize(): Long = sizeBytes
+
+    override fun close() = Unit
+}
+
+private fun Int.toPlayerStateName(): String {
+    return when (this) {
+        Player.STATE_IDLE -> "idle"
+        Player.STATE_BUFFERING -> "buffering"
+        Player.STATE_READY -> "ready"
+        Player.STATE_ENDED -> "ended"
+        else -> "unknown($this)"
+    }
 }
 
 internal actual suspend fun toggleVoiceRecording(): VoiceRecordingResult {
@@ -142,6 +310,10 @@ object AndroidChatPlatformBridge {
     private var activeAudioPlayer: MediaPlayer? = null
     private val audioProgressHandler = Handler(Looper.getMainLooper())
     private var audioProgressRunnable: Runnable? = null
+
+    fun requireContext(): Context {
+        return checkNotNull(activity) { "Android chat platform is not registered." }
+    }
 
     fun register(activity: ComponentActivity) {
         this.activity = activity
@@ -200,7 +372,8 @@ object AndroidChatPlatformBridge {
             return VoiceRecordingResult.PermissionDenied
         }
 
-        val file = File(currentActivity.cacheDir, "kalog-voice-${UUID.randomUUID()}.m4a")
+        val recordingDirectory = File(currentActivity.noBackupFilesDir, "kalog-active-recordings").apply { mkdirs() }
+        val file = File(recordingDirectory, "kalog-voice-${UUID.randomUUID()}.m4a")
         val recorder = runCatching {
             val mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(currentActivity)
@@ -231,7 +404,11 @@ object AndroidChatPlatformBridge {
 
         val player = runCatching {
             MediaPlayer().apply {
-                setDataSource(currentActivity, Uri.parse(localUri))
+                if (SecureAndroidAttachmentStore.isSecureUri(localUri)) {
+                    setDataSource(SecureAttachmentMediaDataSource(localUri))
+                } else {
+                    setDataSource(currentActivity, Uri.parse(localUri))
+                }
                 setOnCompletionListener { completedPlayer ->
                     publishFinalAudioProgress(completedPlayer, onProgress)
                     releaseAudioPlayer(completedPlayer)
@@ -280,14 +457,18 @@ object AndroidChatPlatformBridge {
         val currentActivity = activity
         val safeMaxSide = maxSidePx.coerceAtLeast(128)
         return runCatching {
+            val decodedSourceBytes = contentBytes ?: localUri
+                ?.takeIf { uri -> SecureAndroidAttachmentStore.isSecureUri(uri) }
+                ?.let(SecureAndroidAttachmentStore::readAll)
+            val decodedSourceUri = localUri.takeIf { decodedSourceBytes == null }
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            decodeImage(contentBytes, localUri, currentActivity, bounds)
+            decodeImage(decodedSourceBytes, decodedSourceUri, currentActivity, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
 
             val decodeOptions = BitmapFactory.Options().apply {
                 inSampleSize = calculateBitmapSampleSize(bounds.outWidth, bounds.outHeight, safeMaxSide)
             }
-            val decoded = decodeImage(contentBytes, localUri, currentActivity, decodeOptions) ?: return@runCatching null
+            val decoded = decodeImage(decodedSourceBytes, decodedSourceUri, currentActivity, decodeOptions) ?: return@runCatching null
             val preview = decoded.scaleToMaxSide(safeMaxSide)
             ByteArrayOutputStream().use { stream ->
                 preview.compress(Bitmap.CompressFormat.JPEG, 84, stream)
@@ -304,7 +485,11 @@ object AndroidChatPlatformBridge {
         return runCatching {
             val retriever = MediaMetadataRetriever()
             try {
-                retriever.setDataSource(currentActivity, Uri.parse(localUri))
+                if (SecureAndroidAttachmentStore.isSecureUri(localUri)) {
+                    retriever.setDataSource(SecureAttachmentMediaDataSource(localUri))
+                } else {
+                    retriever.setDataSource(currentActivity, Uri.parse(localUri))
+                }
                 val targetSize = retriever.scaledVideoFrameSize(safeMaxSide)
                 val decoded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                     retriever.getScaledFrameAtTime(
@@ -404,6 +589,8 @@ private class ActiveVoiceRecorder(
             file.delete()
             return VoiceRecordingResult.Unavailable
         }
+        val bytes = file.readBytes()
+        file.delete()
         val durationMillis = (System.currentTimeMillis() - startedAtMillis).coerceAtLeast(0L)
         return VoiceRecordingResult.Finished(
             ChatAttachment(
@@ -411,9 +598,9 @@ private class ActiveVoiceRecorder(
                 kind = ChatAttachmentKind.Voice,
                 name = "voice.m4a",
                 mimeType = "audio/mp4",
-                sizeBytes = file.length(),
-                localUri = file.toURI().toString(),
-                contentBytes = file.readBytes(),
+                sizeBytes = bytes.size.toLong(),
+                localUri = null,
+                contentBytes = bytes,
                 durationMillis = durationMillis,
             ),
         )
@@ -436,27 +623,24 @@ private fun Uri.toChatAttachment(context: Context): ChatAttachment? {
         }
     }
     val fileName = metadata?.name ?: lastPathSegment ?: "attachment"
-    val stagedFile = File(
-        context.cacheDir,
-        "kalog-attachment-${UUID.randomUUID()}${fileName.extensionOrEmpty(mimeType)}",
-    )
-    contentResolver.openInputStream(this)?.use { input ->
-        stagedFile.outputStream().use { output ->
-            input.copyTo(output)
+    runCatching {
+        contentResolver.takePersistableUriPermission(this, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    val fileSize = metadata?.sizeBytes
+    val contentBytes = fileSize
+        ?.takeIf { size -> size in 1..INLINE_ATTACHMENT_BYTES_LIMIT }
+        ?.let {
+            contentResolver.openInputStream(this)?.use { input -> input.readBytes() }
         }
-    } ?: return null
-    if (!stagedFile.isFile || stagedFile.length() == 0L) return null
-
-    val fileSize = stagedFile.length()
 
     return ChatAttachment(
         id = UUID.randomUUID().toString(),
         kind = mimeType.toAttachmentKind(),
         name = fileName,
         mimeType = mimeType,
-        sizeBytes = metadata?.sizeBytes ?: fileSize,
-        localUri = stagedFile.toURI().toString(),
-        contentBytes = if (fileSize <= INLINE_ATTACHMENT_BYTES_LIMIT) stagedFile.readBytes() else null,
+        sizeBytes = fileSize ?: contentBytes?.size?.toLong(),
+        localUri = toString(),
+        contentBytes = contentBytes,
     )
 }
 
@@ -470,6 +654,10 @@ private fun decodeImage(
         return BitmapFactory.decodeByteArray(contentBytes, 0, contentBytes.size, options)
     }
     if (localUri == null) return null
+    if (SecureAndroidAttachmentStore.isSecureUri(localUri)) {
+        val bytes = SecureAndroidAttachmentStore.readAll(localUri) ?: return null
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
     val uri = Uri.parse(localUri)
     if (uri.scheme == "file") {
         return BitmapFactory.decodeFile(File(URI(localUri)).absolutePath, options)
@@ -525,15 +713,13 @@ private fun Bitmap.toPhotoAttachment(context: Context): ChatAttachment? {
         stream.toByteArray()
     }
     if (bytes.isEmpty()) return null
-    val file = File(context.cacheDir, "kalog-photo-${UUID.randomUUID()}.jpg")
-    file.writeBytes(bytes)
     return ChatAttachment(
         id = UUID.randomUUID().toString(),
         kind = ChatAttachmentKind.Image,
         name = "photo.jpg",
         mimeType = "image/jpeg",
         sizeBytes = bytes.size.toLong(),
-        localUri = file.toURI().toString(),
+        localUri = null,
         contentBytes = bytes,
     )
 }
@@ -552,24 +738,5 @@ private fun String?.toAttachmentKind(): ChatAttachmentKind {
     }
 }
 
-private fun String?.extensionOrEmpty(mimeType: String?): String {
-    val explicitExtension = this
-        ?.substringAfterLast('.', missingDelimiterValue = "")
-        ?.takeIf { extension -> extension.isNotBlank() && extension.length <= 8 }
-    if (explicitExtension != null) return ".$explicitExtension"
-
-    return when (mimeType?.lowercase()) {
-        "image/jpeg" -> ".jpg"
-        "image/png" -> ".png"
-        "image/gif" -> ".gif"
-        "image/webp" -> ".webp"
-        "video/mp4" -> ".mp4"
-        "video/webm" -> ".webm"
-        "audio/mpeg" -> ".mp3"
-        "audio/mp4" -> ".m4a"
-        "audio/ogg" -> ".ogg"
-        else -> ""
-    }
-}
-
 private const val INLINE_ATTACHMENT_BYTES_LIMIT = 16L * 1024L * 1024L
+private const val CHAT_VIDEO_PLAYER_TAG = "KALogVideoPlayer"
