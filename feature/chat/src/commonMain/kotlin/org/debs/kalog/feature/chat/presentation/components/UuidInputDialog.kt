@@ -6,6 +6,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import org.debs.kalog.feature.chat.localization.chatLocalized
 
 @Composable
 fun UuidInputDialog(
@@ -38,7 +39,7 @@ fun UuidInputDialog(
                 enabled = !isProcessing,
                 onClick = onDismiss,
             ) {
-                Text("Cancel")
+                Text(chatLocalized(en = "Cancel", ru = "Отмена"))
             }
         },
         confirmButton = {

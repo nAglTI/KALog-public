@@ -1,11 +1,31 @@
+import com.codingfeline.buildkonfig.compiler.FieldSpec.Type.STRING
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 val isAppleHost = System.getProperty("os.name") == "Mac OS X"
+val localNetworkPropertiesFile = rootProject.layout.projectDirectory.file("local.properties").asFile
+val localNetworkProperties = Properties().apply {
+    if (localNetworkPropertiesFile.isFile) {
+        localNetworkPropertiesFile.inputStream().use(::load)
+    }
+}
+
+fun localNetworkProperty(key: String): String? {
+    return localNetworkProperties.getProperty(key)?.takeIf(String::isNotBlank)
+}
+
+val networkBaseUrl = localNetworkProperty("kalog.network.baseUrl")
+    ?: providers.environmentVariable("KALOG_NETWORK_BASE_URL").orNull
+    ?: ""
+val networkDnsFallbackHosts = localNetworkProperty("kalog.network.dnsFallbackHosts")
+    ?: providers.environmentVariable("KALOG_NETWORK_DNS_FALLBACK_HOSTS").orNull
+    ?: ""
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidMultiplatformLibrary)
     alias(libs.plugins.serialization)
+    alias(libs.plugins.buildKonfig)
 }
 
 kotlin {
@@ -48,5 +68,15 @@ kotlin {
                 implementation(libs.ktor.client.darwin)
             }
         }
+    }
+}
+
+buildkonfig {
+    packageName = "org.debs.kalog.core.network.config"
+    objectName = "NetworkBuildKonfig"
+
+    defaultConfigs {
+        buildConfigField(STRING, "NETWORK_BASE_URL", networkBaseUrl)
+        buildConfigField(STRING, "NETWORK_DNS_FALLBACK_HOSTS", networkDnsFallbackHosts)
     }
 }

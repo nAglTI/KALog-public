@@ -20,6 +20,7 @@ import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RequestChatAttachmentDownloadUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
+import org.debs.kalog.feature.chat.localization.chatLocalized
 
 class ChatDetailsViewModel(
     private val chatId: String,
@@ -57,9 +58,9 @@ class ChatDetailsViewModel(
                 _state.update { it.copy(draft = event.value) }
             }
             ChatDetailsEvent.SendClicked -> sendMessage()
-            ChatDetailsEvent.AttachFileClicked -> notifyAttachmentPickerPending(ATTACH_FILE_PENDING)
-            ChatDetailsEvent.PickImageClicked -> notifyAttachmentPickerPending(PICK_IMAGE_PENDING)
-            ChatDetailsEvent.RecordVoiceClicked -> notifyAttachmentPickerPending(RECORD_VOICE_PENDING)
+            ChatDetailsEvent.AttachFileClicked -> notifyAttachmentPickerPending(attachFilePendingMessage())
+            ChatDetailsEvent.PickImageClicked -> notifyAttachmentPickerPending(pickImagePendingMessage())
+            ChatDetailsEvent.RecordVoiceClicked -> notifyAttachmentPickerPending(recordVoicePendingMessage())
             is ChatDetailsEvent.AttachmentDraftSelected -> prepareAttachment(event.attachment)
             is ChatDetailsEvent.AttachmentDraftsSelected -> prepareAttachments(event.attachments)
             is ChatDetailsEvent.RemoveAttachmentDraft -> removeAttachment(event.attachmentId)
@@ -110,7 +111,7 @@ class ChatDetailsViewModel(
         if ((draft.isBlank() && attachments.isEmpty()) || sendMessageJob?.isActive == true) return
         if (state.value.isPreparingAttachment) {
             viewModelScope.launch {
-                _effect.emit(ChatDetailsEffect.ShowMessage(WAIT_ATTACHMENTS_UPLOAD))
+                _effect.emit(ChatDetailsEffect.ShowMessage(waitAttachmentsUploadMessage()))
             }
             return
         }
@@ -136,7 +137,7 @@ class ChatDetailsViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                _effect.emit(ChatDetailsEffect.ShowError(SEND_MESSAGE_ERROR))
+                _effect.emit(ChatDetailsEffect.ShowError(sendMessageError()))
             } finally {
                 _state.update { it.copy(isSendingMessage = false) }
             }
@@ -205,14 +206,14 @@ class ChatDetailsViewModel(
                         if (firstFailureMessage == null) {
                             firstFailureMessage = error.message?.takeIf(String::isNotBlank)
                                 ?: error::class.simpleName
-                                ?: "unknown error"
+                                ?: chatLocalized(en = "unknown error", ru = "неизвестная ошибка")
                         }
                     }
                 }
                 if (failedAttachmentCount > 0) {
                     val message = firstFailureMessage?.let { reason ->
-                        "$PREPARE_ATTACHMENT_ERROR $reason"
-                    } ?: PREPARE_ATTACHMENT_ERROR
+                        "${prepareAttachmentError()} $reason"
+                    } ?: prepareAttachmentError()
                     _effect.emit(ChatDetailsEffect.ShowError(message))
                 }
             } catch (error: CancellationException) {
@@ -250,7 +251,7 @@ class ChatDetailsViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                _effect.emit(ChatDetailsEffect.ShowError(DOWNLOAD_ATTACHMENT_ERROR))
+                _effect.emit(ChatDetailsEffect.ShowError(downloadAttachmentError()))
             }
         }
     }
@@ -327,12 +328,40 @@ class ChatDetailsViewModel(
 
     private companion object {
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 10
-        private const val SEND_MESSAGE_ERROR = "Couldn't encrypt or send the message. Nothing was sent."
-        private const val PREPARE_ATTACHMENT_ERROR = "Couldn't prepare or upload one or more attachments."
-        private const val DOWNLOAD_ATTACHMENT_ERROR = "Couldn't start attachment download."
-        private const val WAIT_ATTACHMENTS_UPLOAD = "Wait until attachments finish uploading."
-        private const val ATTACH_FILE_PENDING = "File picker is unavailable on this platform or was cancelled."
-        private const val PICK_IMAGE_PENDING = "Image picker is unavailable on this platform or was cancelled."
-        private const val RECORD_VOICE_PENDING = "Voice recording needs a native recorder on this platform."
+
+        private fun sendMessageError(): String = chatLocalized(
+            en = "Could not encrypt or send the message. Nothing was sent.",
+            ru = "Не удалось зашифровать или отправить сообщение. Ничего не отправлено.",
+        )
+
+        private fun prepareAttachmentError(): String = chatLocalized(
+            en = "Could not prepare or upload one or more attachments.",
+            ru = "Не удалось подготовить или загрузить одно или несколько вложений.",
+        )
+
+        private fun downloadAttachmentError(): String = chatLocalized(
+            en = "Could not start downloading the attachment.",
+            ru = "Не удалось начать скачивание вложения.",
+        )
+
+        private fun waitAttachmentsUploadMessage(): String = chatLocalized(
+            en = "Wait until attachments finish uploading.",
+            ru = "Дождитесь окончания загрузки вложений.",
+        )
+
+        private fun attachFilePendingMessage(): String = chatLocalized(
+            en = "File picking is unavailable on this platform or was cancelled.",
+            ru = "Выбор файла недоступен на этой платформе или был отменён.",
+        )
+
+        private fun pickImagePendingMessage(): String = chatLocalized(
+            en = "Image picking is unavailable on this platform or was cancelled.",
+            ru = "Выбор изображения недоступен на этой платформе или был отменён.",
+        )
+
+        private fun recordVoicePendingMessage(): String = chatLocalized(
+            en = "Voice recording on this platform requires a native recorder.",
+            ru = "Для записи голоса на этой платформе нужен нативный рекордер.",
+        )
     }
 }

@@ -2,6 +2,7 @@ package org.debs.kalog.feature.chat.presentation.platform
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -48,6 +49,9 @@ import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 
 internal actual val hasSoftwareKeyboard: Boolean = false
+
+@Composable
+actual fun ConfigureSystemBars(fullScreenMediaVisible: Boolean) = Unit
 
 internal actual suspend fun pickFileAttachment(): ChatAttachment? = withContext(Dispatchers.IO) {
     if (GraphicsEnvironment.isHeadless()) return@withContext null
@@ -249,9 +253,14 @@ internal actual fun loadVideoThumbnail(localUri: String, maxSidePx: Int): ByteAr
 @Composable
 internal actual fun PlatformVideoPlayer(
     localUri: String,
+    fileName: String?,
+    mimeType: String?,
     modifier: Modifier,
 ) {
-    if (SecureJvmAttachmentStore.isSecureUri(localUri)) return
+    val playbackFile = remember(localUri, fileName, mimeType) {
+        localUri.toJvmVideoPlaybackFile(fileName = fileName, mimeType = mimeType)
+    } ?: return
+    val deletePlaybackFile = SecureJvmAttachmentStore.isSecureUri(localUri)
     var mediaPlayer: MediaPlayer? = null
     SwingPanel(
         modifier = modifier,
@@ -260,7 +269,7 @@ internal actual fun PlatformVideoPlayer(
                 val jfxPanel = JFXPanel()
                 add(jfxPanel, BorderLayout.CENTER)
                 javafx.application.Platform.runLater {
-                    val player = MediaPlayer(Media(File(URI(localUri)).toURI().toString())).apply {
+                    val player = MediaPlayer(Media(playbackFile.toURI().toString())).apply {
                         isAutoPlay = true
                     }
                     mediaPlayer = player
@@ -281,7 +290,37 @@ internal actual fun PlatformVideoPlayer(
                 mediaPlayer?.stop()
                 mediaPlayer?.dispose()
             }
+            if (deletePlaybackFile) {
+                runCatching { playbackFile.delete() }
+            }
         }
+    }
+}
+
+private fun String.toJvmVideoPlaybackFile(
+    fileName: String?,
+    mimeType: String?,
+): File? {
+    return if (SecureJvmAttachmentStore.isSecureUri(this)) {
+        val bytes = SecureJvmAttachmentStore.readAll(this) ?: return null
+        val extension = fileName?.substringAfterLast('.', missingDelimiterValue = "")
+            ?.takeIf { it.isNotBlank() }
+            ?: mimeType.toVideoExtension()
+        Files.createTempFile("kalog-video-", ".$extension").toFile().apply {
+            writeBytes(bytes)
+            deleteOnExit()
+        }
+    } else {
+        runCatching { File(URI(this)).takeIf(File::isFile) }.getOrNull()
+    }
+}
+
+private fun String?.toVideoExtension(): String {
+    return when (this) {
+        "video/webm" -> "webm"
+        "video/quicktime" -> "mov"
+        "video/x-matroska" -> "mkv"
+        else -> "mp4"
     }
 }
 

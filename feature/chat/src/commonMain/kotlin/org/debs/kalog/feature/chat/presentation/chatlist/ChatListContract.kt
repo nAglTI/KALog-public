@@ -1,10 +1,14 @@
 package org.debs.kalog.feature.chat.presentation.chatlist
 
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
+import org.debs.kalog.feature.chat.localization.chatLocalized
 
 data class ChatListUiState(
-    val title: String = "KALog",
-    val summary: String = "Encrypted chats",
+    val title: String = "Mayday Chat",
+    val summary: String = chatLocalized(
+        en = "Encrypted chats",
+        ru = "Зашифрованные чаты",
+    ),
     val isCreatingChat: Boolean = false,
     val items: List<ChatListItemUiState> = emptyList(),
 )

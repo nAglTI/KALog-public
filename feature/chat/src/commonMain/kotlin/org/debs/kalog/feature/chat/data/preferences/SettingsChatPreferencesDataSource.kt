@@ -87,6 +87,38 @@ class SettingsChatPreferencesDataSource(
         keyValueStorage.putString(MEDIA_CACHE_RETENTION_DAYS, days.coerceAtLeast(0).toString())
     }
 
+    override fun observeThemeMode() = keyValueStorage
+        .observeString(APP_THEME_MODE, AppThemeMode.System.storageValue)
+        .map(AppThemeMode::fromStorage)
+
+    override suspend fun getThemeMode(): AppThemeMode {
+        return AppThemeMode.fromStorage(keyValueStorage.getStringOrNull(APP_THEME_MODE))
+    }
+
+    override suspend fun saveThemeMode(themeMode: AppThemeMode) {
+        keyValueStorage.putString(APP_THEME_MODE, themeMode.storageValue)
+    }
+
+    override fun observeDesktopAutostartEnabled() = keyValueStorage
+        .observeString(DESKTOP_AUTOSTART_ENABLED, "true")
+        .map { it != "false" }
+
+    override suspend fun isDesktopAutostartEnabled(): Boolean {
+        return keyValueStorage.getStringOrNull(DESKTOP_AUTOSTART_ENABLED) != "false"
+    }
+
+    override suspend fun setDesktopAutostartEnabled(enabled: Boolean) {
+        keyValueStorage.putString(DESKTOP_AUTOSTART_ENABLED, if (enabled) "true" else "false")
+    }
+
+    override suspend fun isAccountOnboardingCompleted(): Boolean {
+        return keyValueStorage.getStringOrNull(ACCOUNT_ONBOARDING_COMPLETED) == "true"
+    }
+
+    override suspend fun setAccountOnboardingCompleted(completed: Boolean) {
+        keyValueStorage.putString(ACCOUNT_ONBOARDING_COMPLETED, if (completed) "true" else "false")
+    }
+
     private fun userNicknameKey(userId: String) = "$USER_NICKNAME_PREFIX$userId"
 
     private fun chatTitleKey(chatId: String) = "$CHAT_TITLE_PREFIX$chatId"
@@ -99,6 +131,9 @@ class SettingsChatPreferencesDataSource(
         private const val CHAT_TITLE_PREFIX = "chat.title."
         private const val DEBUG_MODE = "chat.debug_mode"
         private const val MEDIA_CACHE_RETENTION_DAYS = "chat.media_cache.retention_days"
+        private const val APP_THEME_MODE = "app.theme.mode"
+        private const val DESKTOP_AUTOSTART_ENABLED = "desktop.autostart.enabled"
+        private const val ACCOUNT_ONBOARDING_COMPLETED = "account.onboarding.completed"
         private const val DEFAULT_MEDIA_CACHE_RETENTION_DAYS = 7
     }
 }

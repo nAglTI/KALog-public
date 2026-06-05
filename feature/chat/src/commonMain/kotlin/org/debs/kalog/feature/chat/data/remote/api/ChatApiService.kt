@@ -18,9 +18,11 @@ import io.ktor.utils.io.writeFully
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.debs.kalog.core.network.client.SecureApiClient
-import org.debs.kalog.core.network.config.NetworkConfig
+import org.debs.kalog.core.network.config.NetworkEnvironment
 import org.debs.kalog.core.network.logging.debugHttpLog
 import org.debs.kalog.core.network.model.SecurePayload
+import org.debs.kalog.core.network.security.NetworkDecryptionResult
+import org.debs.kalog.feature.chat.localization.chatLocalized
 
 private class ProgressByteArrayContent(
     private val bytes: ByteArray,
@@ -46,7 +48,7 @@ private class ProgressByteArrayContent(
 
 class ChatApiService(
     private val secureApiClient: SecureApiClient,
-    private val networkConfig: NetworkConfig,
+    private val networkEnvironment: NetworkEnvironment,
     private val json: Json,
 ) {
     suspend fun start(request: StartRequestDto): StartResponseDto {
@@ -87,11 +89,11 @@ class ChatApiService(
             requestConfig = {
                 timeout {
                     requestTimeoutMillis = maxOf(
-                        networkConfig.requestTimeoutMillis,
+                        networkEnvironment.requestTimeoutMillis,
                         MESSAGE_POLL_TIMEOUT_MS,
                     )
                     socketTimeoutMillis = maxOf(
-                        networkConfig.socketTimeoutMillis,
+                        networkEnvironment.socketTimeoutMillis,
                         MESSAGE_POLL_TIMEOUT_MS,
                     )
                 }
@@ -177,11 +179,11 @@ class ChatApiService(
             secureApiClient.httpClient.put(fullUrl) {
                 timeout {
                     requestTimeoutMillis = maxOf(
-                        networkConfig.requestTimeoutMillis,
+                        networkEnvironment.requestTimeoutMillis,
                         ATTACHMENT_TRANSFER_TIMEOUT_MS,
                     )
                     socketTimeoutMillis = maxOf(
-                        networkConfig.socketTimeoutMillis,
+                        networkEnvironment.socketTimeoutMillis,
                         ATTACHMENT_TRANSFER_TIMEOUT_MS,
                     )
                 }
@@ -212,11 +214,11 @@ class ChatApiService(
             secureApiClient.httpClient.get(fullUrl) {
                 timeout {
                     requestTimeoutMillis = maxOf(
-                        networkConfig.requestTimeoutMillis,
+                        networkEnvironment.requestTimeoutMillis,
                         ATTACHMENT_TRANSFER_TIMEOUT_MS,
                     )
                     socketTimeoutMillis = maxOf(
-                        networkConfig.socketTimeoutMillis,
+                        networkEnvironment.socketTimeoutMillis,
                         ATTACHMENT_TRANSFER_TIMEOUT_MS,
                     )
                 }
@@ -236,7 +238,12 @@ class ChatApiService(
 
         if (response.status.value !in 200..299) {
             val responseBody = runCatching { response.bodyAsText() }
-                .getOrElse { error -> "<failed to read response body: ${error.message.orEmpty()}>" }
+                .getOrElse { error ->
+                    chatLocalized(
+                        en = "<failed to read response body: ${error.message.orEmpty()}>",
+                        ru = "<не удалось прочитать тело ответа: ${error.message.orEmpty()}>",
+                    )
+                }
             error("HTTP ${response.status.value} ${response.status.description}: $responseBody")
         }
 
@@ -244,7 +251,7 @@ class ChatApiService(
     }
 
     private fun url(path: String): String {
-        return "${networkConfig.baseUrl.trimEnd('/')}$path"
+        return networkEnvironment.resolveUrl(path)
     }
 
     private suspend inline fun <reified Request : Any, reified Response : Any> postJson(
@@ -350,7 +357,12 @@ class ChatApiService(
         }
 
         val responseBody = runCatching { response.bodyAsText() }
-            .getOrElse { error -> "<failed to read response body: ${error.message.orEmpty()}>" }
+            .getOrElse { error ->
+                chatLocalized(
+                    en = "<failed to read response body: ${error.message.orEmpty()}>",
+                    ru = "<не удалось прочитать тело ответа: ${error.message.orEmpty()}>",
+                )
+            }
         val decryptedResponseBody = if (decryptResponse) {
             decryptResponseBody(responseBody)
         } else {
@@ -383,17 +395,18 @@ class ChatApiService(
 
         if (encryptedChunks.isEmpty()) return ""
 
-        val decryptedBody = runCatching {
-            secureApiClient.unwrapResponseBody(
+        return when (
+            val result = secureApiClient.unwrapResponseBody(
                 SecurePayload(
                     body = rawBody,
                     chunks = encryptedChunks,
                     isEncrypted = true,
                 ),
             )
-        }.getOrNull() ?: return null
-
-        return decryptedBody.takeUnless { it == rawBody }
+        ) {
+            is NetworkDecryptionResult.Decrypted -> result.body
+            NetworkDecryptionResult.Undecryptable -> null
+        }
     }
 
     private fun logRequest(
@@ -402,17 +415,17 @@ class ChatApiService(
         requestBody: String?,
         transportBody: String? = null,
     ) {
-        // FIXME: Remove plaintext request logging or heavily redact payloads before production rollout.
+        if (!networkEnvironment.enableLogging) return
         debugHttpLog(
             buildString {
                 appendLine("HTTP REQUEST")
                 appendLine("method=$method")
-                appendLine("url=$fullUrl")
+                appendLine("url=${fullUrl.redactedUrlForLog()}")
                 if (requestBody != null) {
-                    appendLine("body=$requestBody")
+                    appendLine("body=${requestBody.redactedBodyForLog()}")
                 }
                 if (transportBody != null) {
-                    append("transport_body=$transportBody")
+                    append("transport_body=${transportBody.redactedBodyForLog()}")
                 }
             },
         )
@@ -426,15 +439,15 @@ class ChatApiService(
         responseBody: String,
         decryptedResponseBody: String?,
     ) {
-        // FIXME: Do not log decrypted response bodies in production; this can leak message contents and identifiers.
+        if (!networkEnvironment.enableLogging) return
         debugHttpLog(
             buildString {
                 appendLine("HTTP RESPONSE")
                 appendLine("method=$method")
-                appendLine("url=$fullUrl")
+                appendLine("url=${fullUrl.redactedUrlForLog()}")
                 appendLine("status=$statusCode $statusDescription")
-                appendLine("body=$responseBody")
-                append("decrypted_body=${decryptedResponseBody ?: "<unavailable>"}")
+                appendLine("body=${responseBody.redactedBodyForLog()}")
+                append("decrypted_body=${decryptedResponseBody?.redactedBodyForLog() ?: "<unavailable>"}")
             },
         )
     }
@@ -446,19 +459,19 @@ class ChatApiService(
         transportBody: String? = null,
         error: Throwable,
     ) {
-        // TODO: Redact sensitive request data in failure logs before enabling this in shared or release environments.
+        if (!networkEnvironment.enableLogging) return
         debugHttpLog(
             buildString {
                 appendLine("HTTP FAILURE")
                 appendLine("method=$method")
-                appendLine("url=$fullUrl")
+                appendLine("url=${fullUrl.redactedUrlForLog()}")
                 if (requestBody != null) {
-                    appendLine("body=$requestBody")
+                    appendLine("body=${requestBody.redactedBodyForLog()}")
                 }
                 if (transportBody != null) {
-                    appendLine("transport_body=$transportBody")
+                    appendLine("transport_body=${transportBody.redactedBodyForLog()}")
                 }
-                append("error=${error::class.simpleName}: ${error.message.orEmpty()}")
+                append("error=${error::class.simpleName ?: "Throwable"}")
             },
         )
     }
@@ -470,9 +483,14 @@ class ChatApiService(
 
     private inline fun <reified Response : Any> LoggedHttpResponse.decodeEncryptedLoggedBody(): Response {
         throwIfNotSuccessful()
-        return json.decodeFromString(requireNotNull(decryptedBody) {
-            "Encrypted response body is missing."
-        })
+        return json.decodeFromString(
+            decryptedBody ?: error(
+                chatLocalized(
+                    en = "Encrypted response body could not be decrypted.",
+                    ru = "Не удалось расшифровать зашифрованное тело ответа.",
+                ),
+            ),
+        )
     }
 
     private inline fun <reified Response : Any> LoggedHttpResponse.decodePlainLoggedBody(): Response {
@@ -490,8 +508,21 @@ private data class LoggedHttpResponse(
 
 private fun LoggedHttpResponse.throwIfNotSuccessful() {
     if (statusCode !in 200..299) {
-        error("HTTP $statusCode $statusDescription: ${decryptedBody ?: body}")
+        error("HTTP $statusCode $statusDescription")
     }
+}
+
+private fun String.redactedBodyForLog(): String {
+    return "<redacted>"
+}
+
+private fun String.redactedUrlForLog(): String {
+    val schemeSeparatorIndex = indexOf("://")
+    if (schemeSeparatorIndex < 0) return "<redacted>"
+
+    val pathStartIndex = indexOf('/', startIndex = schemeSeparatorIndex + 3)
+    val path = if (pathStartIndex >= 0) substring(pathStartIndex).substringBefore('?') else ""
+    return "<redacted-host>$path"
 }
 
 @Serializable

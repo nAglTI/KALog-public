@@ -17,7 +17,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -34,14 +37,13 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
+import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
 
 @Composable
@@ -55,14 +57,7 @@ fun ChatListScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFFF4FAFF),
-                        MaterialTheme.colorScheme.background,
-                    ),
-                ),
-            ),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
             ChatListHeader(
@@ -136,10 +131,10 @@ private fun ChatListHeader(
             color = MaterialTheme.colorScheme.onBackground,
         )
         IconButton(onClick = onSettingsClick) {
-            Text(
-                text = "\u2699",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Icon(
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = chatLocalized(en = "Settings", ru = "Настройки"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -155,7 +150,7 @@ private fun ChatListRow(
             .fillMaxWidth()
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(28.dp),
-        color = Color.White.copy(alpha = 0.96f),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
     ) {
@@ -183,6 +178,7 @@ private fun ChatListRow(
                         text = item.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -232,16 +228,22 @@ private fun ChatListRow(
 private fun ChatListPreview() {
     ChatListScreen(
         state = ChatListUiState(
-            title = "KALog",
-            summary = "3 encrypted chats",
+            title = "Mayday Chat",
+            summary = chatLocalized(
+                en = "Encrypted chats: 3",
+                ru = "Зашифрованные чаты: 3",
+            ),
             items = listOf(
                 ChatListItemUiState(
                     id = "1",
-                    title = "Release channel",
-                    avatar = AvatarSpec("RC", AvatarAccent.Rose),
+                    title = chatLocalized(en = "Release Channel", ru = "Канал релизов"),
+                    avatar = AvatarSpec(chatLocalized(en = "RC", ru = "КР"), AvatarAccent.Rose),
                     timestamp = "08:28",
-                    preview = "The latest changelog draft is ready.",
-                    previewAuthor = "Anna",
+                    preview = chatLocalized(
+                        en = "The latest changelog draft is ready.",
+                        ru = "Последний черновик списка изменений готов.",
+                    ),
+                    previewAuthor = chatLocalized(en = "Anna", ru = "Анна"),
                     unreadCount = 2,
                 ),
             ),

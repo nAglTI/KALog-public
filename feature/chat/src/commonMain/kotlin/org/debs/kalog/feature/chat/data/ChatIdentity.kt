@@ -1,3 +1,12 @@
 package org.debs.kalog.feature.chat.data
 
-internal const val CURRENT_USER_DISPLAY_NAME = "You"
+import org.debs.kalog.feature.chat.localization.chatLocalized
+
+internal fun currentUserDisplayName(): String = chatLocalized(
+    en = "You",
+    ru = "Вы",
+)
+
+internal fun isCurrentUserDisplayName(displayName: String?): Boolean {
+    return displayName == "You" || displayName == "Вы"
+}

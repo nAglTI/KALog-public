@@ -23,11 +23,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.debs.kalog.core.network.client.SecureApiClient
-import org.debs.kalog.core.network.config.NetworkConfig
+import org.debs.kalog.core.network.config.NetworkEnvironment
 import org.debs.kalog.core.network.model.SecurePayload
 import org.debs.kalog.core.network.model.SecureRequestEnvelope
+import org.debs.kalog.core.network.security.NetworkDecryptionResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ChatApiServiceJvmTest {
@@ -57,6 +60,28 @@ class ChatApiServiceJvmTest {
 
         assertEquals("server-key", response.serverPublicKey)
         assertEquals("user-1", response.userId)
+    }
+
+    @Test
+    fun defaultNetworkEnvironment_disablesHttpLogging() {
+        assertFalse(NetworkEnvironment.Default.enableLogging)
+    }
+
+    @Test
+    fun encryptedResponse_failsClosedWhenBodyCannotBeDecrypted() = runBlocking {
+        val service = createService(
+            responseBody = "ciphertext-that-must-not-be-exposed",
+            unwrapResponse = { NetworkDecryptionResult.Undecryptable },
+        ) { request ->
+            assertEquals(HttpMethod.Post, request.method)
+        }
+
+        val error = assertFailsWith<IllegalStateException> {
+            service.getChatList()
+        }
+
+        assertEquals("Не удалось расшифровать зашифрованное тело ответа.", error.message)
+        assertFalse(error.message.orEmpty().contains("ciphertext-that-must-not-be-exposed"))
     }
 
     @Test
@@ -359,6 +384,9 @@ class ChatApiServiceJvmTest {
     private fun createService(
         responseBody: String,
         encryptResponse: Boolean = true,
+        unwrapResponse: suspend (SecurePayload) -> NetworkDecryptionResult = {
+            NetworkDecryptionResult.Decrypted(it.chunks.singleOrNull() ?: it.body.orEmpty())
+        },
         assertRequest: suspend (HttpRequestData) -> Unit,
     ): ChatApiService {
         val engine = MockEngine { request ->
@@ -377,8 +405,8 @@ class ChatApiServiceJvmTest {
             }
         }
         return ChatApiService(
-            secureApiClient = FakeSecureApiClient(client),
-            networkConfig = NetworkConfig(baseUrl = "https://example.com"),
+            secureApiClient = FakeSecureApiClient(client, unwrapResponse),
+            networkEnvironment = NetworkEnvironment.Default.copy(baseUrl = "https://example.com"),
             json = json,
         )
     }
@@ -386,6 +414,7 @@ class ChatApiServiceJvmTest {
 
 private class FakeSecureApiClient(
     override val httpClient: HttpClient,
+    private val unwrapResponse: suspend (SecurePayload) -> NetworkDecryptionResult,
 ) : SecureApiClient {
     override suspend fun prepareRequestBody(body: String): SecurePayload {
         return SecurePayload(
@@ -401,8 +430,8 @@ private class FakeSecureApiClient(
         )
     }
 
-    override suspend fun unwrapResponseBody(payload: SecurePayload): String {
-        return payload.chunks.singleOrNull() ?: payload.body.orEmpty()
+    override suspend fun unwrapResponseBody(payload: SecurePayload): NetworkDecryptionResult {
+        return unwrapResponse(payload)
     }
 }
 

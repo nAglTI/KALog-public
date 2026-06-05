@@ -15,18 +15,26 @@ import org.debs.kalog.feature.chat.data.cache.EncryptedCachedAttachmentPart
 import org.debs.kalog.feature.chat.data.cache.NoOpChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
+import org.debs.kalog.feature.chat.data.crypto.ChatKeySnapshot
 import org.debs.kalog.feature.chat.data.crypto.ChatParticipantKey
+import org.debs.kalog.feature.chat.data.crypto.StoredChatKeyPair
+import org.debs.kalog.feature.chat.data.crypto.StoredChatParticipants
+import org.debs.kalog.core.crypto.PrivateKeyRef
 import org.debs.kalog.feature.chat.data.local.ChatLocalDataSource
 import org.debs.kalog.feature.chat.data.local.LocalChatMessage
 import org.debs.kalog.feature.chat.data.local.LocalChatThread
+import org.debs.kalog.feature.chat.data.preferences.AppThemeMode
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.data.remote.*
+import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
+import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class OfflineFirstChatRepositoryJvmTest {
@@ -147,6 +155,64 @@ class OfflineFirstChatRepositoryJvmTest {
         assertEquals(listOf("1", "2", "3"), chat.messages.map { message -> message.id })
         assertEquals("3", chats.first { thread -> thread.id == chatId }.lastMessage?.id)
         assertEquals(emptyList(), remoteDataSource.historyCalls)
+    }
+
+    @Test
+    fun observeChat_showsUndecryptablePlaceholderInsteadOfRawCiphertext() = runBlocking {
+        val chatId = "chat-1"
+        val ciphertext = "ciphertext-that-must-not-render"
+        val localDataSource = FakeChatLocalDataSource(
+            initialThreads = listOf(
+                LocalChatThread(
+                    id = chatId,
+                    title = "Secure chat",
+                    subtitle = "Personal chat",
+                    typeRaw = "personal",
+                    avatarInitials = "SC",
+                    avatarAccent = AvatarAccent.Sky,
+                    unreadCount = 0,
+                    messages = listOf(
+                        LocalChatMessage(
+                            id = "message-1",
+                            chatId = chatId,
+                            sender = "user-2",
+                            encryptedChunks = listOf(ciphertext),
+                            timestamp = "2026-03-21T10:00:00Z",
+                            isService = false,
+                            isMine = false,
+                            deliveryStatus = DeliveryStatus.Read,
+                            position = 1,
+                            messageType = "default",
+                            fromUserId = "user-2",
+                            toUserId = "user-1",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val repository = createRepository(
+            localDataSource = localDataSource,
+            keyStore = FakeChatKeyStore(),
+            remoteDataSource = FakeChatRemoteDataSource(
+                startSession = RemoteStartSession(
+                    userId = "user-1",
+                    serverPublicKey = "server-key",
+                ),
+                chats = emptyList(),
+                chatInfoById = emptyMap(),
+                historyByOffset = emptyMap(),
+            ),
+        )
+
+        val message = repository.observeChat(chatId)
+            .filterNotNull()
+            .first()
+            .messages
+            .single() as ChatMessage.User
+
+        assertEquals("Не удалось расшифровать сообщение.", message.body)
+        assertEquals(emptyList(), message.attachments)
+        assertFalse(message.body.contains(ciphertext))
     }
 
     @Test
@@ -1169,6 +1235,74 @@ class OfflineFirstChatRepositoryJvmTest {
     }
 
     @Test
+    fun sendMessage_keepsImportedChatKeyWhenRemoteCurrentUserKeyDiffers() = runBlocking {
+        val chatId = "chat-1"
+        val keyStore = FakeChatKeyStore(
+            currentUserId = "user-1",
+            currentUserPublicKey = "transport-public-key",
+            currentUserPrivateKey = "transport-private-key",
+            serverPublicKey = "server-key",
+        )
+        keyStore.saveChatKeyPair(
+            chatId = chatId,
+            publicKey = "imported-chat-public-key",
+            privateKey = "imported-chat-private-key",
+        )
+        val encryptionService = FakeEncryptionService(
+            generatedKeyPair = GeneratedKeyPair(
+                publicKey = "generated-chat-public-key",
+                privateKey = "generated-chat-private-key",
+            ),
+        )
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "stale-server-chat-public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "public-key-2"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            keyStore = keyStore,
+            encryptionService = encryptionService,
+        )
+
+        repository.openChat(chatId)
+        repository.sendMessage(chatId, "hello")
+
+        assertEquals("imported-chat-public-key", keyStore.chatPublicKey(chatId))
+        assertEquals("imported-chat-private-key", keyStore.chatPrivateKey(chatId))
+        assertEquals(listOf(chatId to "imported-chat-public-key"), remoteDataSource.setGroupChatPublicKeyCalls)
+        assertEquals(
+            setOf("user-1", "user-2"),
+            remoteDataSource.lastSentPayloads.map(RemoteSendPayload::recipientId).toSet(),
+        )
+        assertEquals(
+            "imported-chat-public-key",
+            keyStore.participantsFor(chatId).first { participant -> participant.userId == "user-1" }.publicKey,
+        )
+    }
+
+    @Test
     fun sendMessage_failsClosedWhenRecipientEncryptionFails() = runBlocking {
         val chatId = "chat-1"
         val keyStore = FakeChatKeyStore()
@@ -1266,6 +1400,7 @@ class OfflineFirstChatRepositoryJvmTest {
                 mimeType = "image/jpeg",
                 sizeBytes = 128_000,
                 localUri = "content://gallery/photo.jpg",
+                contentBytes = "photo-bytes".encodeToByteArray(),
             ),
         )
         val preparedVoice = repository.prepareAttachment(
@@ -1277,6 +1412,7 @@ class OfflineFirstChatRepositoryJvmTest {
                 mimeType = "audio/mp4",
                 durationMillis = 7_000,
                 localUri = "content://recorder/voice.m4a",
+                contentBytes = "voice-bytes".encodeToByteArray(),
             ),
         )
 
@@ -1529,6 +1665,7 @@ class OfflineFirstChatRepositoryJvmTest {
                 id = "image-uuid",
                 kind = ChatAttachmentKind.Image,
                 name = "image.jpg",
+                contentBytes = "image-bytes".encodeToByteArray(),
             ),
         )
         val secondAttachment = repository.prepareAttachment(
@@ -1537,6 +1674,7 @@ class OfflineFirstChatRepositoryJvmTest {
                 id = "file-uuid",
                 kind = ChatAttachmentKind.File,
                 name = "report.pdf",
+                contentBytes = "report-bytes".encodeToByteArray(),
             ),
         )
 
@@ -1589,6 +1727,7 @@ class OfflineFirstChatRepositoryJvmTest {
                 kind = ChatAttachmentKind.Audio,
                 name = "song.mp3",
                 mimeType = "audio/mpeg",
+                contentBytes = "audio-bytes".encodeToByteArray(),
             ),
         )
         val voiceAttachment = repository.prepareAttachment(
@@ -1598,6 +1737,7 @@ class OfflineFirstChatRepositoryJvmTest {
                 kind = ChatAttachmentKind.Voice,
                 name = "voice.m4a",
                 mimeType = "audio/mp4",
+                contentBytes = "voice-bytes".encodeToByteArray(),
             ),
         )
 
@@ -2198,7 +2338,7 @@ class OfflineFirstChatRepositoryJvmTest {
         assertEquals("Alice", chat.title)
         assertEquals("A", chat.avatar.initials)
         assertEquals("Alice", firstUserMessage.sender)
-        assertEquals("Alice changed their nickname", nicknameServiceMessage.body)
+        assertEquals("Alice изменил никнейм", nicknameServiceMessage.body)
         assertEquals("Alice", repository.getChatParticipants(chatId).first { it.userId == "user-2" }.displayName)
     }
 
@@ -2276,7 +2416,7 @@ class OfflineFirstChatRepositoryJvmTest {
         assertTrue(loaded)
         assertEquals("Alice", preferences.getUserNickname("user-2"))
         assertEquals("Alice", historicalMessage.sender)
-        assertEquals("Alice changed their nickname", nicknameServiceMessage.body)
+        assertEquals("Alice изменил никнейм", nicknameServiceMessage.body)
         assertEquals("Alice", repository.getChatParticipants(chatId).first { it.userId == "user-2" }.displayName)
     }
 
@@ -2408,7 +2548,13 @@ class OfflineFirstChatRepositoryJvmTest {
                 ),
             ),
         )
-        val repository = createRepository(remoteDataSource = remoteDataSource)
+        val keyStore = FakeChatKeyStore()
+        keyStore.saveChatKeyPair(nicknameChatId, publicKey = "public-key", privateKey = "private-key")
+        keyStore.saveChatKeyPair(otherChatId, publicKey = "public-key", privateKey = "private-key")
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            keyStore = keyStore,
+        )
 
         repository.startSession()
 
@@ -2900,6 +3046,12 @@ private class FakeChatKeyStore(
     private val participantsByChatId = mutableMapOf<String, List<ChatParticipantKey>>()
     private val chatPublicKeys = mutableMapOf<String, String>()
     private val chatPrivateKeys = mutableMapOf<String, String>()
+    private val keyRevision = MutableStateFlow("0")
+    private var revisionCounter = 0
+
+    override fun observeKeyRevision(): Flow<String> = keyRevision.asStateFlow()
+
+    override suspend fun currentKeyRevision(): String = keyRevision.value
 
     override suspend fun currentUserId(): String? = currentUserId
 
@@ -2913,14 +3065,17 @@ private class FakeChatKeyStore(
         currentUserId = userId ?: currentUserId
         currentUserPublicKey = publicKey
         currentUserPrivateKey = privateKey
+        touchKeyRevision()
     }
 
     override suspend fun saveCurrentUserId(userId: String) {
         currentUserId = userId
+        touchKeyRevision()
     }
 
     override suspend fun saveServerPublicKey(publicKey: String) {
         serverPublicKey = publicKey
+        touchKeyRevision()
     }
 
     override suspend fun chatPublicKey(chatId: String): String? = chatPublicKeys[chatId]
@@ -2930,6 +3085,7 @@ private class FakeChatKeyStore(
     override suspend fun saveChatKeyPair(chatId: String, publicKey: String, privateKey: String) {
         chatPublicKeys[chatId] = publicKey
         chatPrivateKeys[chatId] = privateKey
+        touchKeyRevision()
     }
 
     override suspend fun participantsFor(chatId: String): List<ChatParticipantKey> {
@@ -2938,12 +3094,51 @@ private class FakeChatKeyStore(
 
     override suspend fun saveParticipants(chatId: String, participants: List<ChatParticipantKey>) {
         participantsByChatId[chatId] = participants
+        touchKeyRevision()
     }
 
     override suspend fun clearChatState(chatId: String) {
         participantsByChatId.remove(chatId)
         chatPublicKeys.remove(chatId)
         chatPrivateKeys.remove(chatId)
+        touchKeyRevision()
+    }
+
+    override suspend fun exportSnapshot(): ChatKeySnapshot {
+        return ChatKeySnapshot(
+            currentUserId = checkNotNull(currentUserId),
+            currentUserPublicKey = checkNotNull(currentUserPublicKey),
+            currentUserPrivateKeyRef = PrivateKeyRef.Exported(checkNotNull(currentUserPrivateKey)).serialize(),
+            serverPublicKey = serverPublicKey,
+            chatKeys = chatPublicKeys.mapNotNull { (chatId, publicKey) ->
+                StoredChatKeyPair(
+                    chatId = chatId,
+                    publicKey = publicKey,
+                    privateKeyRef = PrivateKeyRef.Exported(chatPrivateKeys[chatId] ?: return@mapNotNull null).serialize(),
+                )
+            },
+            participantsByChat = participantsByChatId.map { (chatId, participants) ->
+                StoredChatParticipants(chatId = chatId, participants = participants)
+            },
+        )
+    }
+
+    override suspend fun importSnapshot(snapshot: ChatKeySnapshot) {
+        currentUserId = snapshot.currentUserId
+        currentUserPublicKey = snapshot.currentUserPublicKey
+        currentUserPrivateKey = snapshot.currentUserPrivateKeyRef.deserializeFakePrivateKey()
+        serverPublicKey = snapshot.serverPublicKey
+        chatPublicKeys.clear()
+        chatPrivateKeys.clear()
+        participantsByChatId.clear()
+        snapshot.chatKeys.forEach { keyPair ->
+            chatPublicKeys[keyPair.chatId] = keyPair.publicKey
+            chatPrivateKeys[keyPair.chatId] = keyPair.privateKeyRef.deserializeFakePrivateKey()
+        }
+        snapshot.participantsByChat.forEach { participants ->
+            participantsByChatId[participants.chatId] = participants.participants
+        }
+        touchKeyRevision()
     }
 
     override suspend fun clearAll() {
@@ -2954,6 +3149,16 @@ private class FakeChatKeyStore(
         participantsByChatId.clear()
         chatPublicKeys.clear()
         chatPrivateKeys.clear()
+        touchKeyRevision()
+    }
+
+    private fun touchKeyRevision() {
+        revisionCounter += 1
+        keyRevision.value = revisionCounter.toString()
+    }
+
+    private fun String.deserializeFakePrivateKey(): String {
+        return (PrivateKeyRef.deserialize(this) as? PrivateKeyRef.Exported)?.value ?: this
     }
 }
 
@@ -3024,6 +3229,9 @@ private class FakeChatPreferencesDataSource(
     private val chatTitles = mutableMapOf<String, String>()
     private var debugMode = false
     private var mediaCacheRetentionDays = 7
+    private val themeMode = MutableStateFlow(AppThemeMode.System)
+    private val desktopAutostartEnabled = MutableStateFlow(true)
+    private var accountOnboardingCompleted = false
 
     override fun observeLastOpenedChatId(): Flow<String?> = openedChatId.asStateFlow()
 
@@ -3096,6 +3304,28 @@ private class FakeChatPreferencesDataSource(
 
     override suspend fun saveMediaCacheRetentionDays(days: Int) {
         mediaCacheRetentionDays = days
+    }
+
+    override fun observeThemeMode(): Flow<AppThemeMode> = themeMode.asStateFlow()
+
+    override suspend fun getThemeMode(): AppThemeMode = themeMode.value
+
+    override suspend fun saveThemeMode(themeMode: AppThemeMode) {
+        this.themeMode.value = themeMode
+    }
+
+    override fun observeDesktopAutostartEnabled(): Flow<Boolean> = desktopAutostartEnabled.asStateFlow()
+
+    override suspend fun isDesktopAutostartEnabled(): Boolean = desktopAutostartEnabled.value
+
+    override suspend fun setDesktopAutostartEnabled(enabled: Boolean) {
+        desktopAutostartEnabled.value = enabled
+    }
+
+    override suspend fun isAccountOnboardingCompleted(): Boolean = accountOnboardingCompleted
+
+    override suspend fun setAccountOnboardingCompleted(completed: Boolean) {
+        accountOnboardingCompleted = completed
     }
 }
 

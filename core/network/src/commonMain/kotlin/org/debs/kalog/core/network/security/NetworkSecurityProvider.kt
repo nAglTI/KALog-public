@@ -7,7 +7,13 @@ import org.debs.kalog.core.network.model.SecurePayload
 interface NetworkSecurityProvider {
     suspend fun protectRequest(body: String): SecurePayload
 
-    suspend fun unprotectResponse(payload: SecurePayload): String
+    suspend fun unprotectResponse(payload: SecurePayload): NetworkDecryptionResult
+}
+
+sealed interface NetworkDecryptionResult {
+    data class Decrypted(val body: String) : NetworkDecryptionResult
+
+    data object Undecryptable : NetworkDecryptionResult
 }
 
 class CipherNetworkSecurityProvider(
@@ -33,14 +39,24 @@ class CipherNetworkSecurityProvider(
         return SecurePayload(chunks = encryptedChunks, isEncrypted = true)
     }
 
-    override suspend fun unprotectResponse(payload: SecurePayload): String {
-        if (!payload.isEncrypted) return payload.body.orEmpty()
+    override suspend fun unprotectResponse(payload: SecurePayload): NetworkDecryptionResult {
+        if (!payload.isEncrypted) {
+            return NetworkDecryptionResult.Decrypted(payload.body.orEmpty())
+        }
 
-        // FIXME: Treat missing private keys as a hard failure for protected responses in production builds.
-        val privateKey = transportKeyProvider.clientPrivateKey() ?: return payload.body.orEmpty()
-        return runCatching { encryptionService.decryptFromChunks(payload.chunks, privateKey) }
-            // FIXME: Decryption failures should not silently fall back to the raw response body.
-            .getOrElse { payload.body.orEmpty() }
+        val privateKeyRef = transportKeyProvider.clientPrivateKeyRef()
+            ?: return NetworkDecryptionResult.Undecryptable
+        if (payload.chunks.isEmpty()) {
+            return NetworkDecryptionResult.Decrypted("")
+        }
+
+        return try {
+            NetworkDecryptionResult.Decrypted(encryptionService.decryptFromChunks(payload.chunks, privateKeyRef))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            NetworkDecryptionResult.Undecryptable
+        }
     }
 }
 

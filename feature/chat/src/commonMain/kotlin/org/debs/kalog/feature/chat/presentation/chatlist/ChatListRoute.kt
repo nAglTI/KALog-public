@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 import org.debs.kalog.feature.chat.presentation.components.ChatTypeSelectionDialog
 import org.debs.kalog.feature.chat.presentation.components.UuidInputDialog
@@ -53,9 +54,15 @@ fun ChatListRoute(
 
     if (isCreatePersonalChatDialogVisible) {
         UuidInputDialog(
-            title = "Create personal chat",
+            title = chatLocalized(
+                en = "Create personal chat",
+                ru = "Создать личный чат",
+            ),
             value = targetUserUuid,
-            confirmLabel = "Create chat",
+            confirmLabel = chatLocalized(
+                en = "Create chat",
+                ru = "Создать чат",
+            ),
             onValueChange = { targetUserUuid = it },
             onDismiss = {
                 isCreatePersonalChatDialogVisible = false

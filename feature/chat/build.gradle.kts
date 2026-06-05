@@ -28,6 +28,7 @@ kotlin {
     sourceSets {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.core.ktx)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.ui)
         }
@@ -62,6 +63,7 @@ kotlin {
             implementation(libs.ktor.serialization.kotlinx.json)
         }
         jvmMain.dependencies {
+            implementation(libs.jna.platform)
             implementation("org.openjfx:javafx-base:21.0.5:win")
             implementation("org.openjfx:javafx-graphics:21.0.5:win")
             implementation("org.openjfx:javafx-media:21.0.5:win")

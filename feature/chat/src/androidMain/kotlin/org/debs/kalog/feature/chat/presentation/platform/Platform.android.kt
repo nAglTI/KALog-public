@@ -9,13 +9,16 @@ import android.graphics.BitmapFactory
 import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
+import android.media.MicrophoneDirection
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.Log
+import android.view.Window
 import androidx.activity.ComponentActivity
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.ActivityResultLauncher
@@ -32,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -41,11 +45,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -68,11 +76,28 @@ import java.io.InputStream
 import java.net.URI
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import org.debs.kalog.feature.chat.data.account.ACCOUNT_BACKUP_MIME_TYPE
+import org.debs.kalog.feature.chat.data.account.AccountBackupFileRef
 import org.debs.kalog.feature.chat.data.cache.SecureAndroidAttachmentStore
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 
 internal actual val hasSoftwareKeyboard: Boolean = true
+
+@Composable
+actual fun ConfigureSystemBars(fullScreenMediaVisible: Boolean) {
+    val view = LocalView.current
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    DisposableEffect(view, fullScreenMediaVisible, darkTheme) {
+        val window = AndroidChatPlatformBridge.currentWindow()
+        if (window != null) {
+            configureSystemBars(window, fullScreenMediaVisible, darkTheme)
+        }
+        onDispose {
+            window?.let { configureSystemBars(it, fullScreenMediaVisible = false, darkTheme = darkTheme) }
+        }
+    }
+}
 
 internal actual suspend fun pickFileAttachment(): ChatAttachment? = AndroidChatPlatformBridge.pickFileAttachment()
 
@@ -118,6 +143,8 @@ internal actual fun loadVideoThumbnail(localUri: String, maxSidePx: Int): ByteAr
 @OptIn(UnstableApi::class)
 internal actual fun PlatformVideoPlayer(
     localUri: String,
+    fileName: String?,
+    mimeType: String?,
     modifier: Modifier,
 ) {
     val player = remember(localUri) {
@@ -204,6 +231,22 @@ private object ChatVideoMediaCodecSelector : MediaCodecSelector {
             requiresSecureDecoder,
             requiresTunnelingDecoder,
         )
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun configureSystemBars(
+    window: Window,
+    fullScreenMediaVisible: Boolean,
+    darkTheme: Boolean,
+) {
+    val useLightSystemBarAppearance = !fullScreenMediaVisible && !darkTheme
+    val controller = WindowCompat.getInsetsController(window, window.decorView)
+    controller.isAppearanceLightStatusBars = useLightSystemBarAppearance
+    controller.isAppearanceLightNavigationBars = useLightSystemBarAppearance
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        window.isStatusBarContrastEnforced = !fullScreenMediaVisible
+        window.isNavigationBarContrastEnforced = !fullScreenMediaVisible
     }
 }
 
@@ -301,11 +344,13 @@ object AndroidChatPlatformBridge {
     private var cameraPreviewLauncher: ActivityResultLauncher<Void?>? = null
     private var microphonePermissionLauncher: ActivityResultLauncher<String>? = null
     private var cameraPermissionLauncher: ActivityResultLauncher<String>? = null
+    private var accountBackupPickerLauncher: ActivityResultLauncher<Array<String>>? = null
     private var pendingPickedFile = CompletableDeferred<ChatAttachment?>()
     private var pendingPickedImages = CompletableDeferred<List<ChatAttachment>>()
     private var pendingPhoto = CompletableDeferred<ChatAttachment?>()
     private var pendingMicrophonePermission = CompletableDeferred<Boolean>()
     private var pendingCameraPermission = CompletableDeferred<Boolean>()
+    private var pendingAccountBackupBytes = CompletableDeferred<ByteArray?>()
     private var activeRecorder: ActiveVoiceRecorder? = null
     private var activeAudioPlayer: MediaPlayer? = null
     private val audioProgressHandler = Handler(Looper.getMainLooper())
@@ -314,6 +359,8 @@ object AndroidChatPlatformBridge {
     fun requireContext(): Context {
         return checkNotNull(activity) { "Android chat platform is not registered." }
     }
+
+    fun currentWindow(): Window? = activity?.window
 
     fun register(activity: ComponentActivity) {
         this.activity = activity
@@ -336,6 +383,16 @@ object AndroidChatPlatformBridge {
         cameraPermissionLauncher = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             pendingCameraPermission.complete(granted)
         }
+        accountBackupPickerLauncher = activity.registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            Thread {
+                val bytes = uri?.let { selectedUri ->
+                    runCatching {
+                        activity.contentResolver.openInputStream(selectedUri)?.use { input -> input.readBytes() }
+                    }.getOrNull()
+                }
+                pendingAccountBackupBytes.complete(bytes)
+            }.start()
+        }
     }
 
     internal suspend fun pickFileAttachment(): ChatAttachment? {
@@ -348,7 +405,7 @@ object AndroidChatPlatformBridge {
     internal suspend fun pickImageAttachments(): List<ChatAttachment> {
         val launcher = imagePickerLauncher ?: return emptyList()
         pendingPickedImages = CompletableDeferred()
-        launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
         return pendingPickedImages.await()
     }
 
@@ -374,24 +431,47 @@ object AndroidChatPlatformBridge {
 
         val recordingDirectory = File(currentActivity.noBackupFilesDir, "kalog-active-recordings").apply { mkdirs() }
         val file = File(recordingDirectory, "kalog-voice-${UUID.randomUUID()}.m4a")
-        val recorder = runCatching {
-            val mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(currentActivity)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }
-            mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            mediaRecorder.setOutputFile(file.absolutePath)
-            mediaRecorder.prepare()
-            mediaRecorder.start()
-            ActiveVoiceRecorder(file, mediaRecorder, startedAtMillis = System.currentTimeMillis())
-        }.getOrNull() ?: return VoiceRecordingResult.Unavailable
+        val recorder = createVoiceRecorder(currentActivity, file) ?: return VoiceRecordingResult.Unavailable
 
         activeRecorder = recorder
         return VoiceRecordingResult.Started
+    }
+
+    internal suspend fun saveAccountBackupFile(fileName: String, bytes: ByteArray): AccountBackupFileRef? {
+        val currentActivity = activity ?: return null
+        val directory = File(currentActivity.cacheDir, "account-backups").apply { mkdirs() }
+        val file = File(directory, fileName)
+        return runCatching {
+            file.writeBytes(bytes)
+            AccountBackupFileRef(fileName = file.name, platformRef = file.absolutePath)
+        }.getOrNull()
+    }
+
+    internal suspend fun shareAccountBackupFile(file: AccountBackupFileRef): Boolean {
+        val currentActivity = activity ?: return false
+        val backupFile = File(file.platformRef)
+        if (!backupFile.isFile) return false
+        val uri = FileProvider.getUriForFile(
+            currentActivity,
+            "${currentActivity.packageName}.fileprovider",
+            backupFile,
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = ACCOUNT_BACKUP_MIME_TYPE
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return runCatching {
+            currentActivity.startActivity(Intent.createChooser(intent, "Share account backup"))
+            true
+        }.getOrDefault(false)
+    }
+
+    internal suspend fun pickAccountBackupFileBytes(): ByteArray? {
+        val launcher = accountBackupPickerLauncher ?: return null
+        pendingAccountBackupBytes = CompletableDeferred()
+        launcher.launch(arrayOf(ACCOUNT_BACKUP_MIME_TYPE, "*/*"))
+        return pendingAccountBackupBytes.await()
     }
 
     internal fun playLocalAudio(
@@ -575,23 +655,109 @@ object AndroidChatPlatformBridge {
         }
         runCatching { player.release() }
     }
+
+    private fun createVoiceRecorder(
+        context: Context,
+        file: File,
+    ): ActiveVoiceRecorder? {
+        VOICE_RECORDING_CONFIGS.forEach { config ->
+            file.delete()
+            val state = VoiceRecorderRuntimeState(config)
+            val mediaRecorder = createAndroidMediaRecorder(context)
+            val started = runCatching {
+                mediaRecorder.setAudioSource(config.audioSource)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    mediaRecorder.setPrivacySensitive(true)
+                }
+                mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                mediaRecorder.setAudioChannels(VOICE_RECORDING_CHANNELS)
+                mediaRecorder.setAudioSamplingRate(config.sampleRateHz)
+                mediaRecorder.setAudioEncodingBitRate(config.bitRateBps)
+                mediaRecorder.setMaxDuration(MAX_VOICE_RECORDING_MILLIS)
+                mediaRecorder.setMaxFileSize(MAX_VOICE_RECORDING_BYTES)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    mediaRecorder.setPreferredMicrophoneDirection(MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
+                }
+                mediaRecorder.setOnErrorListener { _, what, extra ->
+                    state.failed = true
+                    Log.w(VOICE_RECORDER_TAG, "Recorder error source=${config.label} what=$what extra=$extra")
+                }
+                mediaRecorder.setOnInfoListener { _, what, extra ->
+                    if (
+                        what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED ||
+                            what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED
+                    ) {
+                        state.limitReached = true
+                    }
+                    Log.d(VOICE_RECORDER_TAG, "Recorder info source=${config.label} what=$what extra=$extra")
+                }
+                mediaRecorder.setOutputFile(file.absolutePath)
+                mediaRecorder.prepare()
+                mediaRecorder.start()
+            }.onFailure { error ->
+                Log.w(VOICE_RECORDER_TAG, "Failed to start recorder with ${config.label}", error)
+                runCatching { mediaRecorder.release() }
+                file.delete()
+            }.isSuccess
+
+            if (started) {
+                Log.d(VOICE_RECORDER_TAG, "Started voice recorder with ${config.label}")
+                return ActiveVoiceRecorder(
+                    file = file,
+                    recorder = mediaRecorder,
+                    state = state,
+                    startedAtElapsedMillis = SystemClock.elapsedRealtime(),
+                )
+            }
+        }
+        return null
+    }
+
+    private fun createAndroidMediaRecorder(context: Context): MediaRecorder {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }
+    }
 }
 
 private class ActiveVoiceRecorder(
     private val file: File,
     private val recorder: MediaRecorder,
-    private val startedAtMillis: Long,
+    private val state: VoiceRecorderRuntimeState,
+    private val startedAtElapsedMillis: Long,
 ) {
     fun stop(): VoiceRecordingResult {
-        runCatching { recorder.stop() }
+        val stopped = runCatching { recorder.stop() }
+            .onFailure { error ->
+                state.failed = true
+                Log.w(VOICE_RECORDER_TAG, "Failed to stop recorder source=${state.config.label}", error)
+            }
+            .isSuccess
         runCatching { recorder.release() }
-        if (!file.isFile || file.length() == 0L) {
+        if (!file.isFile || file.length() < MIN_VOICE_RECORDING_BYTES) {
+            file.delete()
+            return if (stopped) VoiceRecordingResult.TooShort else VoiceRecordingResult.Unavailable
+        }
+        val elapsedMillis = (SystemClock.elapsedRealtime() - startedAtElapsedMillis).coerceAtLeast(0L)
+        val durationMillis = file.audioDurationMillis() ?: elapsedMillis
+        if (durationMillis < MIN_VOICE_RECORDING_MILLIS) {
+            file.delete()
+            return VoiceRecordingResult.TooShort
+        }
+        if (!stopped && durationMillis <= 0L) {
             file.delete()
             return VoiceRecordingResult.Unavailable
         }
-        val bytes = file.readBytes()
+        val bytes = runCatching { file.readBytes() }
+            .getOrElse {
+                file.delete()
+                return VoiceRecordingResult.Unavailable
+            }
         file.delete()
-        val durationMillis = (System.currentTimeMillis() - startedAtMillis).coerceAtLeast(0L)
         return VoiceRecordingResult.Finished(
             ChatAttachment(
                 id = UUID.randomUUID().toString(),
@@ -604,6 +770,37 @@ private class ActiveVoiceRecorder(
                 durationMillis = durationMillis,
             ),
         )
+    }
+}
+
+private data class VoiceRecorderConfig(
+    val audioSource: Int,
+    val sampleRateHz: Int,
+    val bitRateBps: Int,
+    val label: String,
+)
+
+private class VoiceRecorderRuntimeState(
+    val config: VoiceRecorderConfig,
+) {
+    @Volatile
+    var failed: Boolean = false
+
+    @Volatile
+    var limitReached: Boolean = false
+}
+
+private fun File.audioDurationMillis(): Long? {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(absolutePath)
+        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            ?.toLongOrNull()
+            ?.takeIf { it > 0L }
+    } catch (_: Throwable) {
+        null
+    } finally {
+        runCatching { retriever.release() }
     }
 }
 
@@ -740,3 +937,42 @@ private fun String?.toAttachmentKind(): ChatAttachmentKind {
 
 private const val INLINE_ATTACHMENT_BYTES_LIMIT = 16L * 1024L * 1024L
 private const val CHAT_VIDEO_PLAYER_TAG = "KALogVideoPlayer"
+private const val VOICE_RECORDER_TAG = "KALogVoiceRecorder"
+private const val VOICE_RECORDING_CHANNELS = 1
+private const val VOICE_RECORDING_BIT_RATE_BPS = 64_000
+private const val MIN_VOICE_RECORDING_MILLIS = 700L
+private const val MIN_VOICE_RECORDING_BYTES = 1_024L
+private const val MAX_VOICE_RECORDING_MILLIS = 5 * 60 * 1000
+private const val MAX_VOICE_RECORDING_BYTES = 12L * 1024L * 1024L
+private val VOICE_RECORDING_CONFIGS = listOf(
+    VoiceRecorderConfig(
+        audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        sampleRateHz = 48_000,
+        bitRateBps = VOICE_RECORDING_BIT_RATE_BPS,
+        label = "voice_communication/48k",
+    ),
+    VoiceRecorderConfig(
+        audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        sampleRateHz = 44_100,
+        bitRateBps = VOICE_RECORDING_BIT_RATE_BPS,
+        label = "voice_communication/44.1k",
+    ),
+    VoiceRecorderConfig(
+        audioSource = MediaRecorder.AudioSource.VOICE_RECOGNITION,
+        sampleRateHz = 48_000,
+        bitRateBps = VOICE_RECORDING_BIT_RATE_BPS,
+        label = "voice_recognition/48k",
+    ),
+    VoiceRecorderConfig(
+        audioSource = MediaRecorder.AudioSource.MIC,
+        sampleRateHz = 48_000,
+        bitRateBps = VOICE_RECORDING_BIT_RATE_BPS,
+        label = "mic/48k",
+    ),
+    VoiceRecorderConfig(
+        audioSource = MediaRecorder.AudioSource.MIC,
+        sampleRateHz = 44_100,
+        bitRateBps = VOICE_RECORDING_BIT_RATE_BPS,
+        label = "mic/44.1k",
+    ),
+)

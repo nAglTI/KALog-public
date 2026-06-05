@@ -40,4 +40,20 @@ interface ChatPreferencesDataSource {
     suspend fun getMediaCacheRetentionDays(): Int
 
     suspend fun saveMediaCacheRetentionDays(days: Int)
+
+    fun observeThemeMode(): Flow<AppThemeMode>
+
+    suspend fun getThemeMode(): AppThemeMode
+
+    suspend fun saveThemeMode(themeMode: AppThemeMode)
+
+    fun observeDesktopAutostartEnabled(): Flow<Boolean>
+
+    suspend fun isDesktopAutostartEnabled(): Boolean
+
+    suspend fun setDesktopAutostartEnabled(enabled: Boolean)
+
+    suspend fun isAccountOnboardingCompleted(): Boolean
+
+    suspend fun setAccountOnboardingCompleted(completed: Boolean)
 }

@@ -24,6 +24,10 @@ interface EncryptionService {
 
     suspend fun decrypt(message: String, privateKey: String): String
 
+    suspend fun decrypt(message: String, privateKeyRef: PrivateKeyRef): String {
+        return decrypt(message, privateKeyRef.requireExportedValue())
+    }
+
     suspend fun encryptAttachment(bytes: ByteArray, key: String): ByteArray
 
     suspend fun decryptAttachment(bytes: ByteArray, key: String): ByteArray
@@ -35,12 +39,86 @@ interface EncryptionService {
     ): List<String>
 
     suspend fun decryptFromChunks(chunks: List<String>, privateKey: String): String
+
+    suspend fun decryptFromChunks(chunks: List<String>, privateKeyRef: PrivateKeyRef): String {
+        return decryptFromChunks(chunks, privateKeyRef.requireExportedValue())
+    }
+
+    suspend fun exportPrivateKey(privateKeyRef: PrivateKeyRef): PrivateKeyRef.Exported {
+        return PrivateKeyRef.Exported(privateKeyRef.requireExportedValue())
+    }
+
+    suspend fun importPrivateKey(
+        publicKey: String,
+        privateKey: PrivateKeyRef.Exported,
+    ): PrivateKeyRef = privateKey
+
+    suspend fun deletePrivateKey(privateKeyRef: PrivateKeyRef) = Unit
 }
+
+expect fun createEncryptionService(): EncryptionService
 
 data class GeneratedKeyPair(
     val publicKey: String,
-    val privateKey: String,
-)
+    val privateKeyRef: PrivateKeyRef,
+) {
+    constructor(publicKey: String, privateKey: String) : this(
+        publicKey = publicKey,
+        privateKeyRef = PrivateKeyRef.Exported(privateKey),
+    )
+
+    val privateKey: String
+        get() = privateKeyRef.requireExportedValue()
+}
+
+sealed interface PrivateKeyRef {
+    fun serialize(): String
+
+    data class Exported(
+        val value: String,
+    ) : PrivateKeyRef {
+        override fun serialize(): String = "$EXPORTED_PREFIX$value"
+    }
+
+    data class PlatformAlias(
+        val provider: String,
+        val alias: String,
+    ) : PrivateKeyRef {
+        override fun serialize(): String = "$PLATFORM_PREFIX$provider:$alias"
+    }
+
+    companion object {
+        fun deserialize(value: String): PrivateKeyRef {
+            return when {
+                value.startsWith(EXPORTED_PREFIX) -> Exported(value.removePrefix(EXPORTED_PREFIX))
+                value.startsWith(PLATFORM_PREFIX) -> {
+                    val body = value.removePrefix(PLATFORM_PREFIX)
+                    val separatorIndex = body.indexOf(':')
+                    require(separatorIndex > 0 && separatorIndex < body.lastIndex) {
+                        "Invalid platform private key reference."
+                    }
+                    PlatformAlias(
+                        provider = body.substring(0, separatorIndex),
+                        alias = body.substring(separatorIndex + 1),
+                    )
+                }
+                else -> error("Unsupported private key reference format.")
+            }
+        }
+    }
+}
+
+fun PrivateKeyRef.exportedValueOrNull(): String? {
+    return (this as? PrivateKeyRef.Exported)?.value
+}
+
+fun PrivateKeyRef.requireExportedValue(): String {
+    return exportedValueOrNull()
+        ?: error("This encryption service cannot use platform private key references.")
+}
+
+private const val EXPORTED_PREFIX = "exported:"
+private const val PLATFORM_PREFIX = "platform:"
 
 data class GeneratedAttachmentKey(
     val key: String,

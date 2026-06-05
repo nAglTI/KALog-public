@@ -1,7 +1,14 @@
+import com.android.build.api.variant.impl.VariantOutputImpl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.time.Instant
 
 val buildVersionCode = (Instant.now().epochSecond / 60).toInt()
+
+fun String.asApkFileNamePart(): String =
+    replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_').ifBlank { "unknown" }
+
+fun apkFileName(versionName: String, versionCode: Int, buildType: String): String =
+    "${rootProject.name.asApkFileNamePart()}-v${versionName.asApkFileNamePart()}-$versionCode-${buildType.asApkFileNamePart()}.apk"
 
 plugins {
     alias(libs.plugins.kotlinAndroid)
@@ -43,10 +50,28 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val variantOutput = output as VariantOutputImpl
+            variantOutput.outputFileName.set(
+                output.versionName.zip(output.versionCode) { versionName, versionCode ->
+                    apkFileName(
+                        versionName = versionName,
+                        versionCode = versionCode,
+                        buildType = variant.buildType.orEmpty(),
+                    )
+                }
+            )
+        }
+    }
+}
+
 dependencies {
     implementation(projects.composeApp)
     implementation(projects.feature.chat)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.biometric)
     implementation(libs.koin.android)
 
     debugImplementation(libs.androidx.ui.tooling)

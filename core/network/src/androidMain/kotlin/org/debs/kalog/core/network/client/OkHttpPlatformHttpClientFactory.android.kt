@@ -4,7 +4,7 @@ import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
-import org.debs.kalog.core.network.config.NetworkConfig
+import org.debs.kalog.core.network.config.NetworkEnvironment
 import okhttp3.Dns
 import okhttp3.Dispatcher
 import java.net.InetAddress
@@ -12,7 +12,7 @@ import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 class OkHttpPlatformHttpClientFactory(
-    private val networkConfig: NetworkConfig,
+    private val networkEnvironment: NetworkEnvironment,
 ) : PlatformHttpClientFactory {
     override fun create(config: HttpClientConfig<*>.() -> Unit): HttpClient {
         return HttpClient(OkHttp) {
@@ -24,8 +24,8 @@ class OkHttpPlatformHttpClientFactory(
                             maxRequestsPerHost = MAX_PARALLEL_REQUESTS_PER_HOST
                         },
                     )
-                    dns(AndroidFallbackDns(networkConfig.dnsFallbackHosts))
-                    connectTimeout(networkConfig.connectTimeoutMillis, TimeUnit.MILLISECONDS)
+                    dns(AndroidFallbackDns(networkEnvironment.dnsFallbackHosts))
+                    connectTimeout(networkEnvironment.connectTimeoutMillis, TimeUnit.MILLISECONDS)
                     readTimeout(LONG_TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     writeTimeout(LONG_TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     callTimeout(0L, TimeUnit.MILLISECONDS)

@@ -7,6 +7,9 @@ import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 
 internal actual val hasSoftwareKeyboard: Boolean = true
 
+@Composable
+actual fun ConfigureSystemBars(fullScreenMediaVisible: Boolean) = Unit
+
 internal actual suspend fun pickFileAttachment(): ChatAttachment? = null
 
 internal actual suspend fun pickImageAttachments(): List<ChatAttachment> = emptyList()
@@ -40,6 +43,8 @@ internal actual fun loadVideoThumbnail(localUri: String, maxSidePx: Int): ByteAr
 @Composable
 internal actual fun PlatformVideoPlayer(
     localUri: String,
+    fileName: String?,
+    mimeType: String?,
     modifier: Modifier,
 ) = Unit
 

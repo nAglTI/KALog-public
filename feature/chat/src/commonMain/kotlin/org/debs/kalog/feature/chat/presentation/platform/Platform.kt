@@ -7,6 +7,9 @@ import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 
 internal expect val hasSoftwareKeyboard: Boolean
 
+@Composable
+expect fun ConfigureSystemBars(fullScreenMediaVisible: Boolean)
+
 internal expect suspend fun pickFileAttachment(): ChatAttachment?
 
 internal expect suspend fun pickImageAttachments(): List<ChatAttachment>
@@ -40,6 +43,8 @@ internal expect fun loadVideoThumbnail(localUri: String, maxSidePx: Int): ByteAr
 @Composable
 internal expect fun PlatformVideoPlayer(
     localUri: String,
+    fileName: String?,
+    mimeType: String?,
     modifier: Modifier = Modifier,
 )
 
@@ -47,6 +52,8 @@ internal sealed interface VoiceRecordingResult {
     data object Started : VoiceRecordingResult
 
     data class Finished(val attachment: ChatAttachment) : VoiceRecordingResult
+
+    data object TooShort : VoiceRecordingResult
 
     data object PermissionDenied : VoiceRecordingResult
 

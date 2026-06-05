@@ -10,26 +10,15 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
-import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.Month
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.crypto.GeneratedAttachmentKey
 import org.debs.kalog.core.crypto.GeneratedKeyPair
-import org.debs.kalog.feature.chat.data.CURRENT_USER_DISPLAY_NAME
-import org.debs.kalog.feature.chat.data.cache.CachedChatAttachment
+import org.debs.kalog.core.crypto.PrivateKeyRef
+import org.debs.kalog.feature.chat.data.currentUserDisplayName
 import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.cache.EncryptedCachedAttachmentPart
 import org.debs.kalog.feature.chat.data.cache.NoOpChatAttachmentFileCache
@@ -49,21 +38,15 @@ import org.debs.kalog.feature.chat.data.remote.RemoteMessage
 import org.debs.kalog.feature.chat.data.remote.RemotePolledMessages
 import org.debs.kalog.feature.chat.data.remote.RemoteSendPayload
 import org.debs.kalog.feature.chat.data.remote.ServiceMessageData
-import org.debs.kalog.feature.chat.domain.model.AvatarAccent
-import org.debs.kalog.feature.chat.domain.model.AvatarSpec
 import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentEncryptionSpec
-import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
-import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentPart
-import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.ChatParticipant
-import org.debs.kalog.feature.chat.domain.model.ChatThread
 import org.debs.kalog.feature.chat.domain.model.ChatType
 import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
-import org.debs.kalog.feature.chat.domain.model.InvitationStatus
 import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
 import org.debs.kalog.feature.chat.domain.repository.ChatRepository
+import org.debs.kalog.feature.chat.localization.chatLocalized
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlin.time.TimeMark
@@ -86,15 +69,11 @@ internal class OfflineFirstChatRepository(
     private val syncLoopJob = MutableStateFlow<Job?>(null)
     private val syncEnabled = MutableStateFlow(true)
     private val nicknameVersion = MutableStateFlow(0)
-    private val cachedAttachmentFiles = MutableStateFlow<Map<String, CachedChatAttachment>>(emptyMap())
-    private val attachmentLoadStates = MutableStateFlow<Map<String, ChatAttachmentLoadState>>(emptyMap())
-    private val attachmentDownloadScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val attachmentDownloadMutex = Mutex()
-    private val attachmentCacheCheckSemaphore = Semaphore(1)
-    private val attachmentDownloadSemaphore = Semaphore(2)
-    private val downloadingAttachmentIds = mutableSetOf<String>()
-    private val attachmentDownloadJobsByChat = mutableMapOf<String, MutableMap<String, Job>>()
-    private var activeAttachmentChatId: String? = null
+    private val attachmentDownloadCoordinator = ChatAttachmentDownloadCoordinator(
+        remoteDataSource = remoteDataSource,
+        encryptionService = encryptionService,
+        attachmentFileCache = attachmentFileCache,
+    )
 
     override suspend fun startSession() {
         syncEnabled.value = true
@@ -159,36 +138,24 @@ internal class OfflineFirstChatRepository(
         sessionStarted = false
         lastPollTimestamp = null
         paginationStates.value = emptyMap()
+        deleteStoredPrivateKeys(localDataSource.observeThreads().value.map(LocalChatThread::id))
         localDataSource.clearAll()
         chatPreferencesDataSource.clearAll()
         chatKeyStore.clearAll()
-        attachmentFileCache.clearAll()
-        cancelAttachmentDownloads()
-        cachedAttachmentFiles.value = emptyMap()
-        attachmentLoadStates.value = emptyMap()
+        attachmentDownloadCoordinator.clearAll()
         nicknameVersion.value = nicknameVersion.value + 1
     }
 
     override suspend fun clearCachedAttachments(): Int {
-        return attachmentFileCache.clearAll().also { clearedCount ->
-            if (clearedCount > 0) {
-                cachedAttachmentFiles.value = emptyMap()
-                attachmentLoadStates.value = emptyMap()
-            }
-        }
+        return attachmentDownloadCoordinator.clearCachedAttachments()
     }
 
     override suspend fun clearCachedAttachmentsOlderThan(ageMillis: Long): Int {
-        return attachmentFileCache.clearOlderThan(ageMillis).also { clearedCount ->
-            if (clearedCount > 0) {
-                cachedAttachmentFiles.value = emptyMap()
-                attachmentLoadStates.value = emptyMap()
-            }
-        }
+        return attachmentDownloadCoordinator.clearCachedAttachmentsOlderThan(ageMillis)
     }
 
     override suspend fun closeChat() {
-        cancelAttachmentDownloads()
+        attachmentDownloadCoordinator.cancelAll()
         chatPreferencesDataSource.clearLastOpenedChatId()
     }
 
@@ -206,8 +173,8 @@ internal class OfflineFirstChatRepository(
         localDataSource.observeThreads(),
         paginationStates,
         nicknameVersion,
-        cachedAttachmentFiles,
-        attachmentLoadStates,
+        attachmentDownloadCoordinator.cachedAttachmentFiles,
+        attachmentDownloadCoordinator.attachmentLoadStates,
     ) { threads, states, _, cachedFiles, loadStates ->
         val thread = threads.firstOrNull { it.id == chatId } ?: return@combine null
         val paginationState = states[chatId] ?: MessagePaginationState()
@@ -220,165 +187,14 @@ internal class OfflineFirstChatRepository(
             attachmentLoadStates = loadStates,
             loadAttachmentFiles = false,
         )
-        scheduleAttachmentDownloads(domainThread)
+        attachmentDownloadCoordinator.scheduleAttachmentDownloads(domainThread)
         domainThread
-    }
-
-    private fun scheduleAttachmentDownloads(thread: ChatThread) {
-        if (activeAttachmentChatId != thread.id) return
-        val knownLoadStates = attachmentLoadStates.value
-        thread.messages
-            .asReversed()
-            .filterIsInstance<ChatMessage.User>()
-            .flatMap { message -> message.attachments }
-            .filter { attachment ->
-                attachment.localUri == null &&
-                    (attachment.decryptionKey != null || attachment.parts.any { part -> part.key != null }) &&
-                    attachment.shouldScheduleAutomaticAttachmentLoad(knownLoadStates)
-            }
-            .take(AUTOMATIC_ATTACHMENT_SCHEDULE_BATCH_SIZE)
-            .forEach { attachment ->
-                scheduleAttachmentDownload(
-                    chatId = thread.id,
-                    attachment = attachment,
-                    userInitiated = false,
-                )
-            }
-    }
-
-    private fun scheduleAttachmentDownload(
-        chatId: String,
-        attachment: ChatAttachment,
-        userInitiated: Boolean,
-    ) {
-        attachmentDownloadScope.launch {
-            val currentJob = currentCoroutineContext()[Job] ?: return@launch
-            val shouldStart = attachmentDownloadMutex.withLock {
-                if (activeAttachmentChatId != chatId || attachment.id in downloadingAttachmentIds) {
-                    false
-                } else {
-                    downloadingAttachmentIds += attachment.id
-                    attachmentDownloadJobsByChat
-                        .getOrPut(chatId) { mutableMapOf() }[attachment.id] = currentJob
-                    true
-                }
-            }
-            if (!shouldStart) return@launch
-
-            try {
-                val cachedFile = attachmentCacheCheckSemaphore.withPermit {
-                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.CheckingCache)
-                    attachmentFileCache.get(attachment)
-                }
-                if (cachedFile != null) {
-                    rememberCachedAttachmentFile(attachment.id, cachedFile)
-                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Ready)
-                    return@launch
-                }
-
-                if (!userInitiated && attachment.requiresExplicitDownload()) {
-                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.WaitingForTap)
-                    return@launch
-                }
-
-                attachmentDownloadSemaphore.withPermit {
-                    updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloading)
-                    val cachedFile = downloadAndCacheAttachment(attachment)
-                    if (cachedFile != null) {
-                        rememberCachedAttachmentFile(attachment.id, cachedFile)
-                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Ready)
-                    } else {
-                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Failed)
-                    }
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Failed)
-            } finally {
-                attachmentDownloadMutex.withLock {
-                    downloadingAttachmentIds -= attachment.id
-                    attachmentDownloadJobsByChat[chatId]?.remove(attachment.id)
-                    if (attachmentDownloadJobsByChat[chatId]?.isEmpty() == true) {
-                        attachmentDownloadJobsByChat.remove(chatId)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun updateAttachmentLoadState(
-        attachmentId: String,
-        state: ChatAttachmentLoadState,
-    ) {
-        attachmentLoadStates.update { current ->
-            if (current[attachmentId] == state) {
-                current
-            } else {
-                current + (attachmentId to state)
-            }
-        }
-    }
-
-    private suspend fun rememberCachedAttachmentFile(
-        attachmentId: String,
-        cachedFile: CachedChatAttachment,
-    ) {
-        attachmentDownloadMutex.withLock {
-            cachedAttachmentFiles.value = cachedAttachmentFiles.value + (attachmentId to cachedFile)
-        }
-    }
-
-    private suspend fun downloadAndCacheAttachment(attachment: ChatAttachment): CachedChatAttachment? {
-        val key = attachment.decryptionKey ?: attachment.parts.firstNotNullOfOrNull(ChatAttachmentPart::key) ?: return null
-        return if (attachment.parts.isEmpty()) {
-            val encryptedBytes = remoteDataSource.downloadAttachment(attachment.id)
-            updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloaded)
-            updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Decrypting)
-            attachmentFileCache.putEncrypted(
-                attachmentId = attachment.id,
-                fileName = attachment.name,
-                mimeType = attachment.mimeType,
-                encryptedBytes = encryptedBytes,
-                plainSizeBytes = attachment.sizeBytes,
-                decryptionKey = key,
-            )
-        } else {
-            attachmentFileCache.putEncryptedFromChunks(
-                attachmentId = attachment.id,
-                fileName = attachment.name,
-                mimeType = attachment.mimeType,
-                plainSizeBytes = attachment.sizeBytes,
-            ) { append ->
-                attachment.parts
-                    .sortedBy(ChatAttachmentPart::index)
-                    .forEach { part ->
-                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloading)
-                        val partKey = part.key ?: key
-                        val encryptedBytes = remoteDataSource.downloadAttachment(part.id)
-                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloaded)
-                        updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Decrypting)
-                        val plainSizeBytes = part.sizeBytes
-                            ?: attachment.inferredPartPlainSize(part.index)
-                            ?: encryptionService.decryptAttachment(encryptedBytes, partKey).size.toLong()
-                        append(
-                            EncryptedCachedAttachmentPart(
-                                id = part.id,
-                                index = part.index,
-                                encryptedBytes = encryptedBytes,
-                                plainSizeBytes = plainSizeBytes,
-                                decryptionKey = partKey,
-                            ),
-                        )
-                    }
-            }
-        }
     }
 
     override suspend fun requestAttachmentDownload(chatId: String, attachmentId: String) {
         val attachment = findAttachmentInChat(chatId, attachmentId) ?: return
-        activateAttachmentChat(chatId)
-        scheduleAttachmentDownload(
+        attachmentDownloadCoordinator.activateChat(chatId)
+        attachmentDownloadCoordinator.scheduleAttachmentDownload(
             chatId = chatId,
             attachment = attachment,
             userInitiated = true,
@@ -386,39 +202,13 @@ internal class OfflineFirstChatRepository(
     }
 
     override suspend fun openChat(chatId: String) {
-        activateAttachmentChat(chatId)
+        attachmentDownloadCoordinator.activateChat(chatId)
         startSession()
         ensureUserSession()
         localDataSource.markChatOpened(chatId)
         chatPreferencesDataSource.saveLastOpenedChatId(chatId)
         syncChat(chatId)
         initializePaginationFromLoadedMessages(chatId)
-    }
-
-    private suspend fun activateAttachmentChat(chatId: String) {
-        val jobsToCancel = attachmentDownloadMutex.withLock {
-            if (activeAttachmentChatId == chatId) return
-            activeAttachmentChatId = chatId
-            val inactiveChats = attachmentDownloadJobsByChat.keys.filter { activeChatId -> activeChatId != chatId }
-            inactiveChats.flatMap { inactiveChatId ->
-                attachmentDownloadJobsByChat.remove(inactiveChatId)
-                    .orEmpty()
-                    .also { jobs -> downloadingAttachmentIds.removeAll(jobs.keys) }
-                    .values
-            }
-        }
-        jobsToCancel.forEach(Job::cancel)
-    }
-
-    private suspend fun cancelAttachmentDownloads() {
-        val jobsToCancel = attachmentDownloadMutex.withLock {
-            activeAttachmentChatId = null
-            val jobs = attachmentDownloadJobsByChat.values.flatMap { jobsByAttachment -> jobsByAttachment.values }
-            attachmentDownloadJobsByChat.clear()
-            downloadingAttachmentIds.clear()
-            jobs
-        }
-        jobsToCancel.forEach(Job::cancel)
     }
 
     private suspend fun findAttachmentInChat(
@@ -429,15 +219,15 @@ internal class OfflineFirstChatRepository(
         thread.messages
             .filterNot { message -> message.isService }
             .forEach { message ->
-                val payload = runCatching {
+                val payload = runCatching<DecodedUserMessagePayload?> {
                     val decryptedBody = if (message.encryptedChunks.isEmpty()) {
                         ""
                     } else {
-                        chatMessageCipher.decryptIncoming(
+                        chatMessageCipher.decryptIncomingBody(
                             chatId = chatId,
                             chunks = message.encryptedChunks,
                             isEncrypted = true,
-                        )
+                        ) ?: return@runCatching null
                     }
                     decryptedBody.toIncomingMessagePayload()
                 }.getOrNull()
@@ -565,25 +355,28 @@ internal class OfflineFirstChatRepository(
         val uploadReservation = remoteDataSource.initAttachmentUpload()
         val plainBytes = attachment.contentBytes ?: attachment.localUri?.let { localUri ->
             attachmentFileCache.readBytes(localUri)
-        }
-        plainBytes?.let { bytes ->
-            val encryptedBytes = encryptionService.encryptAttachment(bytes, generatedKey.key)
-            attachmentFileCache.putEncrypted(
-                attachmentId = uploadReservation.attachmentId,
-                fileName = attachment.name,
-                mimeType = attachment.mimeType,
-                encryptedBytes = encryptedBytes,
-                plainSizeBytes = bytes.size.toLong(),
-                decryptionKey = generatedKey.key,
-            )
-            remoteDataSource.uploadAttachment(
-                attachmentId = uploadReservation.attachmentId,
-                uploadToken = uploadReservation.uploadToken,
-                bytes = encryptedBytes,
-                contentType = attachment.mimeType,
-                onProgress = onUploadProgress,
-            )
-        }
+        } ?: error(
+            chatLocalized(
+                en = "Unable to read attachment bytes.",
+                ru = "Не удалось прочитать данные вложения.",
+            ),
+        )
+        val encryptedBytes = encryptionService.encryptAttachment(plainBytes, generatedKey.key)
+        attachmentFileCache.putEncrypted(
+            attachmentId = uploadReservation.attachmentId,
+            fileName = attachment.name,
+            mimeType = attachment.mimeType,
+            encryptedBytes = encryptedBytes,
+            plainSizeBytes = plainBytes.size.toLong(),
+            decryptionKey = generatedKey.key,
+        )
+        remoteDataSource.uploadAttachment(
+            attachmentId = uploadReservation.attachmentId,
+            uploadToken = uploadReservation.uploadToken,
+            bytes = encryptedBytes,
+            contentType = attachment.mimeType,
+            onProgress = onUploadProgress,
+        )
 
         val preparedAttachment = attachment.copy(
             id = uploadReservation.attachmentId,
@@ -618,7 +411,12 @@ internal class OfflineFirstChatRepository(
 
         while (offset < totalBytes) {
             val plainChunk = readAttachmentChunk(attachment, offset, ATTACHMENT_UPLOAD_CHUNK_BYTES)
-                ?: error("Unable to read attachment chunk.")
+                ?: error(
+                    chatLocalized(
+                        en = "Unable to read attachment chunk.",
+                        ru = "Не удалось прочитать фрагмент вложения.",
+                    ),
+                )
             if (plainChunk.isEmpty()) break
 
             val reservation = if (index == 0) {
@@ -665,11 +463,17 @@ internal class OfflineFirstChatRepository(
             if (plainChunk.size < ATTACHMENT_UPLOAD_CHUNK_BYTES) break
         }
 
-        check(parts.isNotEmpty()) { "Attachment did not produce any upload chunks." }
+        check(parts.isNotEmpty()) {
+            chatLocalized(
+                en = "Attachment did not produce any upload chunks.",
+                ru = "Вложение не удалось разбить на фрагменты для загрузки.",
+            )
+        }
 
         val preparedAttachment = attachment.copy(
             id = firstReservation.attachmentId,
             encryptionKeyId = firstReservation.attachmentId,
+            sizeBytes = attachment.sizeBytes ?: totalBytes,
             contentBytes = null,
             localUri = null,
             chunkSizeBytes = ATTACHMENT_UPLOAD_CHUNK_BYTES.toLong(),
@@ -722,7 +526,7 @@ internal class OfflineFirstChatRepository(
             targetUserId = targetUserId,
             publicKey = chatKeyPair.publicKey,
         )
-        chatKeyStore.saveChatKeyPair(chat.id, chatKeyPair.publicKey, chatKeyPair.privateKey)
+        chatKeyStore.saveChatKeyPair(chat.id, chatKeyPair.publicKey, chatKeyPair.privateKeyRef)
         syncChat(chat.id)
         localDataSource.updateInvitationStatus(chat.id, INVITATION_STATUS_ACCEPTED)
         return chat.id
@@ -735,7 +539,7 @@ internal class OfflineFirstChatRepository(
 
         val chat = remoteDataSource.createGroupChat(generatedChatKeyPair?.publicKey ?: publicKey.orEmpty())
         generatedChatKeyPair?.let { keyPair ->
-            chatKeyStore.saveChatKeyPair(chat.id, keyPair.publicKey, keyPair.privateKey)
+            chatKeyStore.saveChatKeyPair(chat.id, keyPair.publicKey, keyPair.privateKeyRef)
         }
         syncChat(chat.id)
         localDataSource.updateInvitationStatus(chat.id, INVITATION_STATUS_ACCEPTED)
@@ -869,29 +673,28 @@ internal class OfflineFirstChatRepository(
         val participants = chatKeyStore.participantsFor(chatId)
         val currentUserParticipant = participants.firstOrNull { it.userId == currentUserId }
         val storedPublicKey = chatKeyStore.chatPublicKey(chatId)
-        val storedPrivateKey = chatKeyStore.chatPrivateKey(chatId)
+        val storedPrivateKeyRef = chatKeyStore.chatPrivateKeyRef(chatId)
+        val storedKeyPair = if (!storedPublicKey.isNullOrBlank() && storedPrivateKeyRef != null) {
+            GeneratedKeyPair(
+                publicKey = storedPublicKey,
+                privateKeyRef = storedPrivateKeyRef,
+            )
+        } else {
+            null
+        }
+
         if (
             currentUserParticipant != null &&
             currentUserParticipant.publicKey.isNotBlank() &&
-            storedPublicKey != null &&
-            storedPrivateKey != null &&
-            currentUserParticipant.publicKey == storedPublicKey
+            storedKeyPair != null &&
+            currentUserParticipant.publicKey == storedKeyPair.publicKey
         ) {
             return
         }
 
-        val keyPair = if (
-            storedPublicKey != null &&
-            storedPrivateKey != null &&
-            (currentUserParticipant?.publicKey.isNullOrBlank() || currentUserParticipant.publicKey == storedPublicKey)
-        ) {
-            GeneratedKeyPair(
-                publicKey = storedPublicKey,
-                privateKey = storedPrivateKey,
-            )
-        } else {
+        val keyPair = storedKeyPair ?: run {
             generateChatKeyPair().also { generatedKeyPair ->
-                chatKeyStore.saveChatKeyPair(chatId, generatedKeyPair.publicKey, generatedKeyPair.privateKey)
+                chatKeyStore.saveChatKeyPair(chatId, generatedKeyPair.publicKey, generatedKeyPair.privateKeyRef)
             }
         }
 
@@ -925,21 +728,21 @@ internal class OfflineFirstChatRepository(
         chatKeyStore.saveCurrentUserKeys(
             userId = session.userId,
             publicKey = requireTransportPublicKey(),
-            privateKey = requireTransportPrivateKey(),
+            privateKeyRef = requireTransportPrivateKeyRef(),
         )
         chatKeyStore.saveServerPublicKey(session.serverPublicKey)
     }
 
     private suspend fun ensureTransportKeys(): Boolean {
         val publicKey = chatKeyStore.currentUserPublicKey()
-        val privateKey = chatKeyStore.currentUserPrivateKey()
-        if (publicKey != null && privateKey != null) return false
+        val privateKeyRef = chatKeyStore.currentUserPrivateKeyRef()
+        if (publicKey != null && privateKeyRef != null) return false
 
         val keyPair = encryptionService.generateKeyPair()
         chatKeyStore.saveCurrentUserKeys(
             userId = chatKeyStore.currentUserId(),
             publicKey = keyPair.publicKey,
-            privateKey = keyPair.privateKey,
+            privateKeyRef = keyPair.privateKeyRef,
         )
         return true
     }
@@ -1131,7 +934,7 @@ internal class OfflineFirstChatRepository(
                 ChatParticipantKey(
                     userId = user.userId,
                     displayName = when {
-                        user.userId == currentUserId -> CURRENT_USER_DISPLAY_NAME
+                        user.userId == currentUserId -> currentUserDisplayName()
                         savedNickname != null -> savedNickname
                         else -> user.userId
                     },
@@ -1168,12 +971,48 @@ internal class OfflineFirstChatRepository(
     }
 
     private suspend fun removeLocalChat(chatId: String) {
+        deletePrivateKeyRef(chatKeyStore.chatPrivateKeyRef(chatId))
         val remainingChatIds = localDataSource.observeThreads().value
             .map(LocalChatThread::id)
             .filterNot { it == chatId }
             .toSet()
         localDataSource.removeChatsExcept(remainingChatIds)
         chatKeyStore.clearChatState(chatId)
+    }
+
+    private suspend fun deleteStoredPrivateKeys(chatIds: Iterable<String>) {
+        val privateKeyRefs = buildList {
+            chatKeyStore.currentUserPrivateKeyRef()?.let(::add)
+            chatIds
+                .distinct()
+                .forEach { chatId -> chatKeyStore.chatPrivateKeyRef(chatId)?.let(::add) }
+            runCatching { chatKeyStore.exportSnapshot() }
+                .getOrNull()
+                ?.let { snapshot ->
+                    PrivateKeyRef.deserializeOrNull(snapshot.currentUserPrivateKeyRef)?.let(::add)
+                    snapshot.chatKeys.forEach { keyPair ->
+                        PrivateKeyRef.deserializeOrNull(keyPair.privateKeyRef)?.let(::add)
+                    }
+                }
+        }
+        privateKeyRefs
+            .distinct()
+            .forEach { privateKeyRef -> deletePrivateKeyRef(privateKeyRef) }
+    }
+
+    private suspend fun deletePrivateKeyRef(privateKeyRef: PrivateKeyRef?) {
+        if (privateKeyRef == null) return
+        try {
+            encryptionService.deletePrivateKey(privateKeyRef)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            // Local state cleanup should continue even if the OS key was already removed.
+        }
+    }
+
+    private fun PrivateKeyRef.Companion.deserializeOrNull(value: String): PrivateKeyRef? {
+        return runCatching { deserialize(value) }.getOrNull()
     }
 
     private suspend fun applyPolledMessages(result: RemotePolledMessages) {
@@ -1274,11 +1113,11 @@ internal class OfflineFirstChatRepository(
         val payloadChunks = message.chunks.drop(1)
         if (payloadChunks.isEmpty()) return null
 
-        val decryptedPayload = chatMessageCipher.decryptIncoming(
+        val decryptedPayload = chatMessageCipher.decryptIncomingBody(
             chatId = message.chatId,
             chunks = payloadChunks,
             isEncrypted = true,
-        )
+        ) ?: return null
         if (decryptedPayload.isBlank()) return null
 
         return runCatching {
@@ -1340,11 +1179,11 @@ internal class OfflineFirstChatRepository(
         val payloadChunks = message.chunks.drop(1)
         if (payloadChunks.isEmpty()) return
 
-        val decryptedPayload = chatMessageCipher.decryptIncoming(
+        val decryptedPayload = chatMessageCipher.decryptIncomingBody(
             chatId = message.chatId,
             chunks = payloadChunks,
             isEncrypted = true,
-        )
+        ) ?: return
         if (decryptedPayload.isBlank()) return
 
         val data = runCatching {
@@ -1421,7 +1260,12 @@ internal class OfflineFirstChatRepository(
 
         val payloads = participants.map { participant ->
             if (participant.publicKey.isBlank()) {
-                error("Public key is missing for nickname recipient ${participant.userId}.")
+                error(
+                    chatLocalized(
+                        en = "Public key is missing for nickname recipient ${participant.userId}.",
+                        ru = "Не найден публичный ключ получателя никнейма ${participant.userId}.",
+                    ),
+                )
             }
             val eventTypeChunk = SERVICE_EVENT_USER_NICKNAME_PROVIDED
             val encryptedDataChunks = encryptionService.encryptToChunks(dataJson, participant.publicKey)
@@ -1482,20 +1326,27 @@ internal class OfflineFirstChatRepository(
 
     private suspend fun requireCurrentUserId(): String {
         return checkNotNull(chatKeyStore.currentUserId()) {
-            "Current user id is not initialized."
+            chatLocalized(
+                en = "Current user id is not initialized.",
+                ru = "ID текущего пользователя не инициализирован.",
+            )
         }
     }
 
     private suspend fun requireTransportPublicKey(): String {
         return checkNotNull(chatKeyStore.currentUserPublicKey()) {
-            "Current user public key is not initialized."
+            chatLocalized(
+                en = "Current user public key is not initialized.",
+                ru = "Публичный ключ текущего пользователя не инициализирован.",
+            )
         }
     }
 
-    private suspend fun requireTransportPrivateKey(): String {
-        return checkNotNull(chatKeyStore.currentUserPrivateKey()) {
-            "Current user private key is not initialized."
-        }
+    private suspend fun requireTransportPrivateKeyRef() = checkNotNull(chatKeyStore.currentUserPrivateKeyRef()) {
+        chatLocalized(
+            en = "Current user private key is not initialized.",
+            ru = "Приватный ключ текущего пользователя не инициализирован.",
+        )
     }
 
     private fun buildMessagePayload(
@@ -1579,553 +1430,3 @@ internal class OfflineFirstChatRepository(
         private const val ATTACHMENT_UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024
     }
 }
-
-private data class MessagePaginationState(
-    val nextOffset: Int = 0,
-    val hasMore: Boolean = true,
-    val isLoading: Boolean = false,
-)
-
-@Serializable
-private data class OutgoingMessagePayload(
-    @SerialName("messageText") val messageText: String,
-    @SerialName("attachments") val attachments: List<OutgoingAttachmentPayload>,
-)
-
-@Serializable
-private data class OutgoingAttachmentPayload(
-    @SerialName("id") val id: String,
-    @SerialName("type") val type: String,
-    @SerialName("key") val key: String,
-    @SerialName("name") val name: String? = null,
-    @SerialName("mimeType") val mimeType: String? = null,
-    @SerialName("size") val sizeBytes: Long? = null,
-    @SerialName("chunkSize") val chunkSizeBytes: Long? = null,
-    @SerialName("partIds") val partIds: List<String> = emptyList(),
-    @SerialName("parts") val parts: List<AttachmentPartPayload> = emptyList(),
-)
-
-@Serializable
-private data class AttachmentPartPayload(
-    @SerialName("id") val id: String,
-    @SerialName("index") val index: Int,
-    @SerialName("size") val sizeBytes: Long? = null,
-    @SerialName("key") val key: String? = null,
-)
-
-@Serializable
-private data class IncomingMessagePayload(
-    @SerialName("messageText") val messageText: String = "",
-    @SerialName("message") val legacyMessage: String? = null,
-    @SerialName("attachments") val attachments: List<IncomingAttachmentPayload> = emptyList(),
-)
-
-@Serializable
-private data class IncomingAttachmentPayload(
-    @SerialName("id") val id: String = "",
-    @SerialName("uuid") val legacyUuid: String = "",
-    @SerialName("type") val type: String = "file",
-    @SerialName("key") val key: String = "",
-    @SerialName("name") val name: String? = null,
-    @SerialName("mimeType") val mimeType: String? = null,
-    @SerialName("size") val sizeBytes: Long? = null,
-    @SerialName("chunkSize") val chunkSizeBytes: Long? = null,
-    @SerialName("partIds") val partIds: List<String> = emptyList(),
-    @SerialName("parts") val parts: List<AttachmentPartPayload> = emptyList(),
-)
-
-private data class DecodedUserMessagePayload(
-    val messageText: String,
-    val attachments: List<ChatAttachment>,
-)
-
-private fun String.toIncomingMessagePayload(): DecodedUserMessagePayload {
-    val payload = runCatching {
-        Json.decodeFromString<IncomingMessagePayload>(this)
-    }.getOrNull()
-
-    if (payload == null) {
-        return DecodedUserMessagePayload(
-            messageText = this,
-            attachments = emptyList(),
-        )
-    }
-
-    return DecodedUserMessagePayload(
-        messageText = payload.messageText.ifBlank { payload.legacyMessage.orEmpty() },
-        attachments = payload.attachments.map { attachment ->
-            val compactParts = attachment.partIds.mapIndexedNotNull { index, partId ->
-                partId.takeIf(String::isNotBlank)?.let { id ->
-                    ChatAttachmentPart(
-                        id = id,
-                        index = index,
-                        sizeBytes = attachment.inferredPartPlainSize(index),
-                    )
-                }
-            }
-            val legacyParts = attachment.parts.mapNotNull { part ->
-                part.id.takeIf(String::isNotBlank)?.let { partId ->
-                    ChatAttachmentPart(
-                        id = partId,
-                        index = part.index,
-                        sizeBytes = part.sizeBytes,
-                        key = part.key,
-                    )
-                }
-            }
-            val parts = compactParts.ifEmpty { legacyParts }
-            val attachmentId = attachment.id
-                .ifBlank { attachment.legacyUuid }
-                .ifBlank { parts.firstOrNull()?.id.orEmpty() }
-            ChatAttachment(
-                id = attachmentId,
-                kind = attachment.type.toChatAttachmentKind(),
-                name = attachment.name ?: attachmentId,
-                mimeType = attachment.mimeType,
-                sizeBytes = attachment.sizeBytes,
-                encryptionKeyId = attachmentId,
-                decryptionKey = attachment.key.ifBlank { null },
-                chunkSizeBytes = attachment.chunkSizeBytes,
-                parts = parts,
-            )
-        }.filter { attachment -> attachment.id.isNotBlank() },
-    )
-}
-
-private fun IncomingAttachmentPayload.inferredPartPlainSize(index: Int): Long? {
-    val chunkSize = chunkSizeBytes ?: return null
-    val totalSize = sizeBytes ?: return null
-    if (index < 0 || chunkSize <= 0L || totalSize < 0L) return null
-    val chunkStart = chunkSize * index
-    if (chunkStart >= totalSize) return 0L
-    return minOf(chunkSize, totalSize - chunkStart)
-}
-
-private fun ChatAttachment.inferredPartPlainSize(index: Int): Long? {
-    val chunkSize = chunkSizeBytes ?: return null
-    val totalSize = sizeBytes ?: return null
-    if (index < 0 || chunkSize <= 0L || totalSize < 0L) return null
-    val chunkStart = chunkSize * index
-    if (chunkStart >= totalSize) return 0L
-    return minOf(chunkSize, totalSize - chunkStart)
-}
-
-private fun ChatAttachmentKind.toMessagePayloadType(): String {
-    return when (this) {
-        ChatAttachmentKind.File -> "file"
-        ChatAttachmentKind.Image -> "photo"
-        ChatAttachmentKind.Video -> "video"
-        ChatAttachmentKind.Audio -> "audio"
-        ChatAttachmentKind.Voice -> "voice"
-    }
-}
-
-private fun String.toChatAttachmentKind(): ChatAttachmentKind {
-    return when (lowercase()) {
-        "photo", "image" -> ChatAttachmentKind.Image
-        "video" -> ChatAttachmentKind.Video
-        "audio", "music", "sound" -> ChatAttachmentKind.Audio
-        "voice" -> ChatAttachmentKind.Voice
-        else -> ChatAttachmentKind.File
-    }
-}
-
-private suspend fun LocalChatThread.toDomain(
-    hasMoreMessages: Boolean = false,
-    isLoadingMoreMessages: Boolean = false,
-    chatMessageCipher: ChatMessageCipher,
-    chatPreferencesDataSource: ChatPreferencesDataSource? = null,
-    remoteDataSource: ChatRemoteDataSource? = null,
-    encryptionService: EncryptionService? = null,
-    attachmentFileCache: ChatAttachmentFileCache = NoOpChatAttachmentFileCache,
-    cachedAttachmentFiles: Map<String, CachedChatAttachment> = emptyMap(),
-    attachmentLoadStates: Map<String, ChatAttachmentLoadState> = emptyMap(),
-    loadAttachmentFiles: Boolean = false,
-): ChatThread {
-    return ChatThread(
-        id = id,
-        title = title,
-        subtitle = subtitle,
-        type = typeRaw.toChatType(),
-        avatar = AvatarSpec(
-            initials = buildAvatarInitials(title).takeUnless { it == "--" } ?: avatarInitials,
-            accent = avatarAccent,
-        ),
-        unreadCount = unreadCount,
-        messages = messages.mapNotNull { message ->
-            message.toDomain(
-                chatMessageCipher = chatMessageCipher,
-                chatPreferencesDataSource = chatPreferencesDataSource,
-                remoteDataSource = remoteDataSource,
-                encryptionService = encryptionService,
-                attachmentFileCache = attachmentFileCache,
-                cachedAttachmentFiles = cachedAttachmentFiles,
-                attachmentLoadStates = attachmentLoadStates,
-                loadAttachmentFiles = loadAttachmentFiles,
-            )
-        },
-        hasMoreMessages = hasMoreMessages,
-        isLoadingMoreMessages = isLoadingMoreMessages,
-        invitationStatus = invitationStatus.toInvitationStatus(),
-    )
-}
-
-private fun String.toInvitationStatus(): InvitationStatus {
-    return when (this) {
-        "pending" -> InvitationStatus.Pending
-        "accepted" -> InvitationStatus.Accepted
-        else -> InvitationStatus.None
-    }
-}
-
-private suspend fun LocalChatMessage.toDomain(
-    chatMessageCipher: ChatMessageCipher,
-    chatPreferencesDataSource: ChatPreferencesDataSource? = null,
-    remoteDataSource: ChatRemoteDataSource? = null,
-    encryptionService: EncryptionService? = null,
-    attachmentFileCache: ChatAttachmentFileCache = NoOpChatAttachmentFileCache,
-    cachedAttachmentFiles: Map<String, CachedChatAttachment> = emptyMap(),
-    attachmentLoadStates: Map<String, ChatAttachmentLoadState> = emptyMap(),
-    loadAttachmentFiles: Boolean = false,
-): ChatMessage? {
-    if (isService) {
-        val debugMode = chatPreferencesDataSource?.isDebugModeEnabled() == true
-        val body = decodeServiceMessageBody(
-            chatId = chatId,
-            chunks = encryptedChunks,
-            chatMessageCipher = chatMessageCipher,
-            chatPreferencesDataSource = chatPreferencesDataSource,
-            debugMode = debugMode,
-        ) ?: return null
-        return ChatMessage.Service(
-            id = id,
-            body = body,
-            timestamp = timestamp.toDisplayTimestamp(),
-        )
-    }
-
-    val decryptedBody = if (encryptedChunks.isEmpty()) {
-        ""
-    } else {
-        chatMessageCipher.decryptIncoming(
-            chatId = chatId,
-            chunks = encryptedChunks,
-            isEncrypted = true,
-        )
-    }
-    val messagePayload = decryptedBody.toIncomingMessagePayload()
-    val attachments = if (loadAttachmentFiles && remoteDataSource != null && encryptionService != null) {
-        messagePayload.attachments.map { attachment ->
-            attachment.withCachedDecryptedFile(
-                remoteDataSource = remoteDataSource,
-                encryptionService = encryptionService,
-                attachmentFileCache = attachmentFileCache,
-            )
-        }
-    } else {
-        messagePayload.attachments.map { attachment ->
-            cachedAttachmentFiles[attachment.id]?.let { cachedFile ->
-                attachment.withCachedFile(cachedFile.localUri, cachedFile.sizeBytes)
-            } ?: attachment.withLoadState(attachmentLoadStates[attachment.id])
-        }
-    }
-    val resolvedSender = if (isMine == true || sender == CURRENT_USER_DISPLAY_NAME) {
-        sender.orEmpty()
-    } else {
-        val userId = fromUserId ?: sender.orEmpty()
-        chatPreferencesDataSource?.getUserNickname(userId) ?: sender.orEmpty()
-    }
-    return ChatMessage.User(
-        id = id,
-        sender = resolvedSender,
-        body = messagePayload.messageText,
-        timestamp = timestamp.toDisplayTimestamp(),
-        isMine = isMine == true,
-        deliveryStatus = deliveryStatus ?: DeliveryStatus.Sent,
-        attachments = attachments,
-    )
-}
-
-private suspend fun ChatAttachment.withCachedDecryptedFile(
-    remoteDataSource: ChatRemoteDataSource,
-    encryptionService: EncryptionService,
-    attachmentFileCache: ChatAttachmentFileCache,
-): ChatAttachment {
-    val cachedFile = attachmentFileCache.get(this)
-    if (cachedFile != null) {
-        return withCachedFile(cachedFile.localUri, cachedFile.sizeBytes)
-    }
-    return this
-}
-
-private fun ChatAttachment.withCachedFile(
-    localUri: String,
-    cachedSizeBytes: Long,
-): ChatAttachment {
-    return copy(
-        localUri = localUri,
-        sizeBytes = sizeBytes ?: cachedSizeBytes,
-        contentBytes = null,
-        loadState = ChatAttachmentLoadState.Ready,
-    )
-}
-
-private fun ChatAttachment.withLoadState(
-    explicitState: ChatAttachmentLoadState?,
-): ChatAttachment {
-    return copy(loadState = explicitState ?: defaultLoadState())
-}
-
-private fun ChatAttachment.defaultLoadState(): ChatAttachmentLoadState {
-    return if (requiresExplicitDownload()) {
-        ChatAttachmentLoadState.WaitingForTap
-    } else {
-        ChatAttachmentLoadState.NotStarted
-    }
-}
-
-private fun ChatAttachment.requiresExplicitDownload(): Boolean {
-    return parts.isNotEmpty() ||
-        (sizeBytes != null && sizeBytes > EXPLICIT_ATTACHMENT_DOWNLOAD_THRESHOLD_BYTES)
-}
-
-private fun ChatAttachment.shouldScheduleAutomaticAttachmentLoad(
-    knownLoadStates: Map<String, ChatAttachmentLoadState>,
-): Boolean {
-    return when (knownLoadStates[id]) {
-        null,
-        ChatAttachmentLoadState.NotStarted -> true
-        ChatAttachmentLoadState.WaitingForTap,
-        ChatAttachmentLoadState.CheckingCache,
-        ChatAttachmentLoadState.Downloading,
-        ChatAttachmentLoadState.Downloaded,
-        ChatAttachmentLoadState.Decrypting,
-        ChatAttachmentLoadState.Ready,
-        ChatAttachmentLoadState.Failed -> false
-    }
-}
-
-private suspend fun decodeServiceMessageBody(
-    chatId: String,
-    chunks: List<String>,
-    chatMessageCipher: ChatMessageCipher,
-    chatPreferencesDataSource: ChatPreferencesDataSource? = null,
-    debugMode: Boolean = false,
-): String? {
-    if (chunks.isEmpty()) return if (debugMode) "" else null
-
-    val eventType = chunks.first()
-    val payloadChunks = chunks.drop(1)
-
-    val payload = if (payloadChunks.isNotEmpty()) {
-        chatMessageCipher.decryptIncoming(
-            chatId = chatId,
-            chunks = payloadChunks,
-            isEncrypted = true,
-        ).ifBlank { null }
-    } else {
-        null
-    }
-
-    return when (eventType) {
-        "user_added" -> if (debugMode) "user_added${payload?.let { " $it" }.orEmpty()}" else null
-
-        "public_key_provided" -> {
-            val data = payload?.let {
-                runCatching { Json.decodeFromString<ServiceMessageData>(it) }.getOrNull()
-            }
-            val displayName = data?.userID?.let { userId ->
-                chatPreferencesDataSource?.getUserNickname(userId) ?: userId.take(8)
-            }
-            if (displayName != null) "$displayName joined the chat"
-            else "A user joined the chat"
-        }
-
-        "user_nickname_provided",
-        "nickname_provided" -> {
-            val data = payload?.let {
-                runCatching { Json.decodeFromString<NicknameProvidedServiceData>(it) }.getOrNull()
-            }
-            if (data != null) "${data.nickname} changed their nickname"
-            else "A user changed their nickname"
-        }
-
-        else -> if (debugMode) "$eventType${payload?.let { " $it" }.orEmpty()}" else null
-    }
-}
-
-private fun RemoteMessage.toLocal(
-    currentUserId: String,
-    position: Long,
-): LocalChatMessage {
-    val isMine = fromUserId == currentUserId
-    val isService = isServiceMessage()
-    return LocalChatMessage(
-        id = id,
-        chatId = chatId,
-        sender = if (isMine) CURRENT_USER_DISPLAY_NAME else fromUserId,
-        encryptedChunks = chunks,
-        timestamp = createdAt,
-        isService = isService,
-        isMine = if (isService) null else isMine,
-        deliveryStatus = if (isService) null else if (isMine) DeliveryStatus.Sent else DeliveryStatus.Read,
-        position = position,
-        messageType = type,
-        fromUserId = fromUserId,
-        toUserId = toUserId,
-    )
-}
-
-private fun RemoteMessage.isServiceMessage(): Boolean {
-    return type.equals("service", ignoreCase = true) || type.equals("system", ignoreCase = true)
-}
-
-private fun RemoteMessage.isNicknameServiceMessage(): Boolean {
-    val eventType = chunks.firstOrNull()?.trim().orEmpty()
-    return isServiceMessage() &&
-        (eventType == "user_nickname_provided" || eventType == "nickname_provided")
-}
-
-internal fun String.toDisplayTimestamp(): String {
-    if (isBlank()) return ""
-    if (matches(SHORT_TIME_REGEX)) return this
-
-    parseIsoTimestamp()?.let { dateTime ->
-        return "${dateTime.day} ${dateTime.month.monthName()}, ${dateTime.timeString()}"
-    }
-
-    return this
-}
-
-private const val EXPLICIT_ATTACHMENT_DOWNLOAD_THRESHOLD_BYTES = 16L * 1024L * 1024L
-private const val AUTOMATIC_ATTACHMENT_SCHEDULE_BATCH_SIZE = 3
-
-private fun String.parseIsoTimestamp(): LocalDateTime? {
-    val normalized = trim()
-    if (normalized.isEmpty()) return null
-
-    runCatching {
-        return Instant.parse(normalized).toLocalDateTime(TimeZone.currentSystemDefault())
-    }
-
-    runCatching {
-        return LocalDateTime.parse(normalized)
-    }
-
-    val normalizedLocalDateTime = normalized
-        .replace(' ', 'T')
-        .removeSuffix("Z")
-
-    runCatching {
-        return LocalDateTime.parse(normalizedLocalDateTime)
-    }
-
-    ISO_TIMESTAMP_REGEX.find(normalized)?.destructured?.let { (year, month, day, hour, minute) ->
-        return LocalDateTime.parse("${year}-${month}-${day}T${hour}:${minute}:00")
-    }
-
-    return null
-}
-
-private fun Month.monthName(): String {
-    return when (this) {
-        Month.JANUARY -> "янв"
-        Month.FEBRUARY -> "фев"
-        Month.MARCH -> "мар"
-        Month.APRIL -> "апр"
-        Month.MAY -> "мая"
-        Month.JUNE -> "июн"
-        Month.JULY -> "июл"
-        Month.AUGUST -> "авг"
-        Month.SEPTEMBER -> "сен"
-        Month.OCTOBER -> "окт"
-        Month.NOVEMBER -> "ноя"
-        Month.DECEMBER -> "дек"
-    }
-}
-
-private fun LocalDateTime.timeString(): String {
-    return "${hour.twoDigits()}:${minute.twoDigits()}"
-}
-
-private fun Int.twoDigits(): String = toString().padStart(2, '0')
-
-private fun latestTimestamp(candidates: Iterable<String>): String? {
-    return candidates
-        .map(String::trim)
-        .filter(String::isNotEmpty)
-        .maxWithOrNull(Comparator(::compareTimestamps))
-}
-
-private fun compareTimestamps(left: String, right: String): Int {
-    val leftInstant = parseInstantOrNull(left)
-    val rightInstant = parseInstantOrNull(right)
-    return when {
-        leftInstant != null && rightInstant != null -> leftInstant.compareTo(rightInstant)
-        leftInstant != null -> 1
-        rightInstant != null -> -1
-        else -> left.compareTo(right)
-    }
-}
-
-private fun compareMessageChronology(left: RemoteMessage, right: RemoteMessage): Int {
-    val leftInstant = parseInstantOrNull(left.createdAt)
-    val rightInstant = parseInstantOrNull(right.createdAt)
-    return when {
-        leftInstant != null && rightInstant != null -> leftInstant.compareTo(rightInstant)
-        else -> 0
-    }
-}
-
-private fun parseInstantOrNull(value: String): Instant? {
-    return runCatching { Instant.parse(value) }.getOrNull()
-}
-
-private fun buildAvatarInitials(title: String): String {
-    return title
-        .split(" ")
-        .filter(String::isNotBlank)
-        .take(2)
-        .joinToString(separator = "") { it.take(1).uppercase() }
-        .ifBlank { "--" }
-}
-
-private fun buildAvatarAccent(seed: String): AvatarAccent {
-    val accents = AvatarAccent.entries
-    val normalizedHash = seed.hashCode().toLong().let { if (it < 0) -it else it }
-    return accents[(normalizedHash % accents.size).toInt()]
-}
-
-private suspend fun buildPersonalChatTitle(
-    type: String,
-    users: List<RemoteChatUser>,
-    currentUserId: String,
-    chatPreferencesDataSource: ChatPreferencesDataSource,
-): String {
-    if (type.toChatType() != ChatType.Personal) return ""
-    val otherUserId = users.firstOrNull { it.userId != currentUserId }?.userId ?: return ""
-    return chatPreferencesDataSource.getUserNickname(otherUserId) ?: otherUserId
-}
-
-private fun buildSubtitle(type: String, users: List<RemoteChatUser>): String {
-    return when (type.toChatType()) {
-        ChatType.Group -> "${users.size.coerceAtLeast(1)} members"
-        ChatType.Personal -> "Personal chat"
-        ChatType.Unknown -> when {
-            users.size > 2 -> "${users.size} members"
-            type.isNotBlank() -> type
-            else -> ""
-        }
-    }
-}
-
-private fun String.toChatType(): ChatType {
-    return when {
-        contains("group", ignoreCase = true) -> ChatType.Group
-        isBlank() -> ChatType.Unknown
-        else -> ChatType.Personal
-    }
-}
-
-private val SHORT_TIME_REGEX = Regex("""^\d{2}:\d{2}$""")
-private val ISO_TIMESTAMP_REGEX = Regex("""(\d{4})-(\d{2})-(\d{2})[T\s].*?(\d{2}):(\d{2})""")

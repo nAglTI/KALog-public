@@ -5,10 +5,10 @@ import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.Dispatcher
 import java.util.concurrent.TimeUnit
-import org.debs.kalog.core.network.config.NetworkConfig
+import org.debs.kalog.core.network.config.NetworkEnvironment
 
 class OkHttpPlatformHttpClientFactory(
-    private val networkConfig: NetworkConfig = NetworkConfig(),
+    private val networkEnvironment: NetworkEnvironment = NetworkEnvironment.Default,
 ) : PlatformHttpClientFactory {
     override fun create(config: HttpClientConfig<*>.() -> Unit): HttpClient {
         return HttpClient(OkHttp) {
@@ -20,7 +20,7 @@ class OkHttpPlatformHttpClientFactory(
                             maxRequestsPerHost = MAX_PARALLEL_REQUESTS_PER_HOST
                         },
                     )
-                    connectTimeout(networkConfig.connectTimeoutMillis, TimeUnit.MILLISECONDS)
+                    connectTimeout(networkEnvironment.connectTimeoutMillis, TimeUnit.MILLISECONDS)
                     readTimeout(LONG_TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     writeTimeout(LONG_TRANSFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     callTimeout(0L, TimeUnit.MILLISECONDS)

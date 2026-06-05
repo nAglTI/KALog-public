@@ -13,6 +13,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.SnackbarHostState
 import kotlinx.coroutines.launch
+import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 import org.debs.kalog.feature.chat.presentation.components.UuidInputDialog
 import org.debs.kalog.feature.chat.presentation.platform.VoiceRecordingResult
@@ -70,9 +71,12 @@ fun ChatDetailsRoute(
 
     if (isInviteDialogVisible && state.canInviteUsers) {
         UuidInputDialog(
-            title = "Invite user to chat",
+            title = chatLocalized(
+                en = "Invite user to chat",
+                ru = "Пригласить пользователя в чат",
+            ),
             value = invitedUserUuid,
-            confirmLabel = "Invite",
+            confirmLabel = chatLocalized(en = "Invite", ru = "Пригласить"),
             onValueChange = { invitedUserUuid = it },
             onDismiss = {
                 isInviteDialogVisible = false
@@ -123,7 +127,12 @@ fun ChatDetailsRoute(
                 if (attachment != null) {
                     viewModel.onEvent(ChatDetailsEvent.AttachmentDraftSelected(attachment))
                 } else {
-                    snackbarHostState.showSnackbar("Camera permission denied or cancelled.")
+                    snackbarHostState.showSnackbar(
+                        chatLocalized(
+                            en = "Camera access was denied or the action was cancelled.",
+                            ru = "Доступ к камере отклонён или действие отменено.",
+                        ),
+                    )
                 }
             }
         },
@@ -137,13 +146,32 @@ fun ChatDetailsRoute(
                         isRecordingVoice = false
                         viewModel.onEvent(ChatDetailsEvent.AttachmentDraftSelected(result.attachment))
                     }
+                    VoiceRecordingResult.TooShort -> {
+                        isRecordingVoice = false
+                        snackbarHostState.showSnackbar(
+                            chatLocalized(
+                                en = "Voice recording is too short.",
+                                ru = "Голосовая запись слишком короткая.",
+                            ),
+                        )
+                    }
                     VoiceRecordingResult.PermissionDenied -> {
                         isRecordingVoice = false
-                        snackbarHostState.showSnackbar("Microphone permission is required.")
+                        snackbarHostState.showSnackbar(
+                            chatLocalized(
+                                en = "Microphone access is required.",
+                                ru = "Нужен доступ к микрофону.",
+                            ),
+                        )
                     }
                     VoiceRecordingResult.Unavailable -> {
                         isRecordingVoice = false
-                        snackbarHostState.showSnackbar("Voice recording is unavailable.")
+                        snackbarHostState.showSnackbar(
+                            chatLocalized(
+                                en = "Voice recording is unavailable.",
+                                ru = "Запись голоса недоступна.",
+                            ),
+                        )
                     }
                 }
             }

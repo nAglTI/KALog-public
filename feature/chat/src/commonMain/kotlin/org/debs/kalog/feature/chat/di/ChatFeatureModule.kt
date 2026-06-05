@@ -1,5 +1,8 @@
 package org.debs.kalog.feature.chat.di
 
+import org.debs.kalog.feature.chat.data.account.AccountBackupManager
+import org.debs.kalog.feature.chat.data.account.AccountBackupFileManager
+import org.debs.kalog.feature.chat.data.account.createAccountBackupFileManager
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
 import org.debs.kalog.feature.chat.data.crypto.ChatTransportKeyProvider
@@ -41,6 +44,9 @@ import org.debs.kalog.feature.chat.domain.usecase.StartChatSessionUseCase
 import org.debs.kalog.feature.chat.presentation.chat.ChatDetailsViewModel
 import org.debs.kalog.feature.chat.presentation.chatinfo.ChatInfoViewModel
 import org.debs.kalog.feature.chat.presentation.chatlist.ChatListViewModel
+import org.debs.kalog.feature.chat.presentation.onboarding.AccountOnboardingViewModel
+import org.debs.kalog.feature.chat.presentation.platform.DesktopAutostartManager
+import org.debs.kalog.feature.chat.presentation.platform.createDesktopAutostartManager
 import org.debs.kalog.feature.chat.presentation.session.ChatSessionViewModel
 import org.debs.kalog.feature.chat.presentation.settings.SettingsViewModel
 import org.debs.kalog.core.network.security.TransportKeyProvider
@@ -48,6 +54,9 @@ import org.koin.dsl.module
 
 val chatFeatureModule = module {
     single<ChatPreferencesDataSource> { SettingsChatPreferencesDataSource(get(), get()) }
+    single<AccountBackupFileManager> { createAccountBackupFileManager() }
+    single { AccountBackupManager(get(), get(), get(), get(), get(), get(), get()) }
+    single<DesktopAutostartManager> { createDesktopAutostartManager() }
     single<ChatKeyStore> { SettingsChatKeyStore(get(), get(), get()) }
     single<TransportKeyProvider> { ChatTransportKeyProvider(get()) }
     single { ChatMessageCipher(get(), get()) }
@@ -80,8 +89,9 @@ val chatFeatureModule = module {
     factory { SendChatMessageUseCase(get()) }
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
+    factory { AccountOnboardingViewModel(get(), get(), get(), get(), get()) }
     factory { ChatListViewModel(get(), get(), get(), get()) }
-    factory { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
+    factory { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatInfoViewModel(chatId, get(), get(), get(), get()) }
 }

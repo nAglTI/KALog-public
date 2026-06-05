@@ -1,4 +1,4 @@
-rootProject.name = "KALog"
+rootProject.name = "mayday-chat"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {

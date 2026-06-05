@@ -1,14 +1,14 @@
-# KALog
+# Mayday Chat
 
 [Read in Russian](README.ru.md)
 
-KALog is a Kotlin Multiplatform secure chat client for Android, iOS, and Desktop JVM. The project uses Compose Multiplatform for UI, Koin for dependency injection, Ktor for networking, and dedicated modules for cryptography, preferences, and secure key storage.
+Mayday Chat is a Kotlin Multiplatform secure chat client for Android, iOS, and Desktop JVM. The project uses Compose Multiplatform for UI, Koin for dependency injection, Ktor for networking, and dedicated modules for cryptography, preferences, and secure key storage.
 
 This README intentionally does not include backend addresses, real UUIDs, keys, internal hosts, or low-level cryptographic protocol details.
 
 ## What the application does
 
-KALog provides a compact secure messaging flow:
+Mayday Chat provides a compact secure messaging flow:
 
 - initializes a user session and shows the current user UUID;
 - lets the user copy that UUID and share it out of band;
@@ -64,7 +64,7 @@ KALog provides a compact secure messaging flow:
 
 ### Cryptography principle
 
-KALog uses asymmetric cryptography as the basis for protecting transport payloads and message contents. Key material is generated on the client device, the public part is shared only where it is required for communication, and the private part stays on the device. Message contents are decrypted locally on the recipient side.
+Mayday Chat uses asymmetric cryptography as the basis for protecting transport payloads and message contents. Key material is generated on the client device, the public part is shared only where it is required for communication, and the private part stays on the device. Message contents are decrypted locally on the recipient side.
 
 For safety reasons, this README does not describe exact protocol steps, key formats, algorithm parameters, or other low-level implementation details.
 
@@ -85,7 +85,7 @@ For safety reasons, this README does not describe exact protocol steps, key form
 
 ### Important security boundaries
 
-- KALog protects message content and protected request payloads, but the backend still processes service metadata required for chat routing.
+- Mayday Chat protects message content and protected request payloads, but the backend still processes service metadata required for chat routing.
 - The initial session bootstrap exchanges public information needed for the protected channel; the main API flow uses protected requests after that point.
 - Application-level cryptographic protection should complement transport hardening and release hardening, not replace them.
 
