@@ -179,3 +179,7 @@ Coming soon.
 - The current chat cache is in memory; persistent storage is prepared in `core/database`, but is not used yet.
 - Desktop secure storage should be replaced with a stronger OS-level secret storage integration.
 - Production deployment should enforce HTTPS/TLS, harden release configuration, and minimize network debug logging.
+
+## License
+
+Mayday Chat is licensed under the [Apache License 2.0](LICENSE).
