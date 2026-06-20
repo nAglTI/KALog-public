@@ -69,7 +69,7 @@ fun main() {
                     JvmStartupAppLock.showReducedProtectionWarning()
                 }
             }
-            App(protectedDeviceLockAvailable = !startupUnlock.showReducedProtectionWarning)
+            App(protectedDeviceLockAvailable = true)
         }
     }
 }

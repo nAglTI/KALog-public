@@ -142,7 +142,7 @@ internal object JvmStartupAppLock {
         val accessControlError = PointerByReference()
         val accessControl = MacOsStartupSecurityFramework.INSTANCE.SecAccessControlCreateWithFlags(
             allocator = null,
-            protection = MacOsStartupSecurityConstants.kSecAttrAccessibleWhenUnlocked,
+            protection = MacOsStartupSecurityConstants.kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             flags = K_SEC_ACCESS_CONTROL_USER_PRESENCE,
             error = accessControlError,
         ) ?: return ERR_SEC_AUTH_FAILED
@@ -163,6 +163,7 @@ internal object JvmStartupAppLock {
             setSharedValue(MacOsStartupSecurityConstants.kSecClass, MacOsStartupSecurityConstants.kSecClassGenericPassword)
             setOwnedValue(MacOsStartupSecurityConstants.kSecAttrService, cfString(MACOS_APP_LOCK_SERVICE))
             setOwnedValue(MacOsStartupSecurityConstants.kSecAttrAccount, cfString(MACOS_APP_LOCK_ACCOUNT))
+            setSharedValue(MacOsStartupSecurityConstants.kSecUseDataProtectionKeychain, MacOsStartupSecurityConstants.kCFBooleanTrue)
             if (returnData) {
                 setSharedValue(MacOsStartupSecurityConstants.kSecReturnData, MacOsStartupSecurityConstants.kCFBooleanTrue)
                 setSharedValue(MacOsStartupSecurityConstants.kSecMatchLimit, MacOsStartupSecurityConstants.kSecMatchLimitOne)
@@ -269,7 +270,7 @@ internal object JvmStartupAppLock {
     private const val APP_LOCK_UNAVAILABLE_MESSAGE =
         "System authentication is required to open Mayday Chat."
     private const val REDUCED_PROTECTION_MESSAGE =
-        "Mayday Chat opened without system authentication because device authentication is not available. Account access, backup import, UUID registration, and key generation are disabled until you set up Windows Hello, Touch ID, or a device password in system settings."
+        "Mayday Chat opened without system authentication because device authentication is not available. Data protection is lower until you set up Windows Hello, Touch ID, or a device password in system settings."
 
     private const val ERROR_SUCCESS = 0
     private const val ERROR_INVALID_PARAMETER = 87
@@ -387,12 +388,13 @@ internal object MacOsStartupSecurityConstants {
     val kSecAttrService: CoreFoundation.CFStringRef = securityStringConstant("kSecAttrService")
     val kSecAttrAccount: CoreFoundation.CFStringRef = securityStringConstant("kSecAttrAccount")
     val kSecAttrAccessControl: CoreFoundation.CFStringRef = securityStringConstant("kSecAttrAccessControl")
-    val kSecAttrAccessibleWhenUnlocked: CoreFoundation.CFStringRef = securityStringConstant("kSecAttrAccessibleWhenUnlocked")
+    val kSecAttrAccessibleWhenUnlockedThisDeviceOnly: CoreFoundation.CFStringRef = securityStringConstant("kSecAttrAccessibleWhenUnlockedThisDeviceOnly")
     val kSecValueData: CoreFoundation.CFStringRef = securityStringConstant("kSecValueData")
     val kSecReturnData: CoreFoundation.CFStringRef = securityStringConstant("kSecReturnData")
     val kSecMatchLimit: CoreFoundation.CFStringRef = securityStringConstant("kSecMatchLimit")
     val kSecMatchLimitOne: CoreFoundation.CFStringRef = securityStringConstant("kSecMatchLimitOne")
     val kSecUseOperationPrompt: CoreFoundation.CFStringRef = securityStringConstant("kSecUseOperationPrompt")
+    val kSecUseDataProtectionKeychain: CoreFoundation.CFStringRef = securityStringConstant("kSecUseDataProtectionKeychain")
 
     private fun securityStringConstant(name: String): CoreFoundation.CFStringRef {
         return CoreFoundation.CFStringRef(
