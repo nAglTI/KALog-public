@@ -39,6 +39,54 @@ class SettingsChatKeyStoreJvmTest {
 
         assertEquals(PrivateKeyRef.Exported("private-key"), keyStore.currentUserPrivateKeyRef())
         assertEquals("private-key", keyStore.currentUserPrivateKey())
+        assertNull(keyValueStorage.getStringOrNull(CURRENT_USER_PRIVATE_KEY))
+        assertEquals(
+            PrivateKeyRef.Exported("private-key").serialize(),
+            secureKeyValueStorage.getStringOrNull(CURRENT_USER_PRIVATE_KEY),
+        )
+    }
+
+    @Test
+    fun storesPlatformPrivateKeyReferenceOutsideSecureStorage() = runBlocking {
+        val keyValueStorage = InMemoryKeyValueStorage()
+        val secureKeyValueStorage = InMemorySecureKeyValueStorage()
+        val keyStore = SettingsChatKeyStore(keyValueStorage, secureKeyValueStorage, Json)
+        val privateKeyRef = PrivateKeyRef.PlatformAlias(
+            provider = "macos-seckey",
+            alias = "org.debs.kalog.test.rsa.chat",
+        )
+
+        keyStore.saveChatKeyPair(
+            chatId = "chat-id",
+            publicKey = "chat-public-key",
+            privateKeyRef = privateKeyRef,
+        )
+
+        assertEquals(privateKeyRef, keyStore.chatPrivateKeyRef("chat-id"))
+        assertEquals(
+            privateKeyRef.serialize(),
+            keyValueStorage.getStringOrNull(CHAT_PRIVATE_KEY),
+        )
+        assertNull(secureKeyValueStorage.getStringOrNull(CHAT_PRIVATE_KEY))
+    }
+
+    @Test
+    fun migratesStoredPlatformPrivateKeyReferenceFromSecureStorage() = runBlocking {
+        val keyValueStorage = InMemoryKeyValueStorage()
+        val secureKeyValueStorage = InMemorySecureKeyValueStorage()
+        val keyStore = SettingsChatKeyStore(keyValueStorage, secureKeyValueStorage, Json)
+        val privateKeyRef = PrivateKeyRef.PlatformAlias(
+            provider = "macos-seckey",
+            alias = "org.debs.kalog.test.rsa.legacy",
+        )
+        secureKeyValueStorage.putString(CHAT_PRIVATE_KEY, privateKeyRef.serialize())
+
+        assertEquals(privateKeyRef, keyStore.chatPrivateKeyRef("chat-id"))
+        assertEquals(
+            privateKeyRef.serialize(),
+            keyValueStorage.getStringOrNull(CHAT_PRIVATE_KEY),
+        )
+        assertNull(secureKeyValueStorage.getStringOrNull(CHAT_PRIVATE_KEY))
     }
 
     @Test
@@ -109,6 +157,7 @@ class SettingsChatKeyStoreJvmTest {
 
     private companion object {
         private const val CURRENT_USER_PRIVATE_KEY = "chat.keys.current_user.private"
+        private const val CHAT_PRIVATE_KEY = "chat.keys.chat.private.chat-id"
     }
 }
 

@@ -49,7 +49,7 @@ class SettingsChatKeyStore(
             keyValueStorage.putString(CURRENT_USER_ID, userId)
         }
         keyValueStorage.putString(CURRENT_USER_PUBLIC_KEY, publicKey)
-        secureKeyValueStorage.putString(CURRENT_USER_PRIVATE_KEY, privateKeyRef.serialize())
+        savePrivateKeyRef(CURRENT_USER_PRIVATE_KEY, privateKeyRef)
         if (
             previousUserId != (userId ?: previousUserId) ||
             previousPublicKey != publicKey ||
@@ -98,7 +98,7 @@ class SettingsChatKeyStore(
         val previousPrivateKeyRef = chatPrivateKeyRef(chatId)
         val trackedChanged = trackChatId(chatId)
         keyValueStorage.putString(chatPublicKeyKey(chatId), publicKey)
-        secureKeyValueStorage.putString(chatPrivateKeyKey(chatId), privateKeyRef.serialize())
+        savePrivateKeyRef(chatPrivateKeyKey(chatId), privateKeyRef)
         if (trackedChanged || previousPublicKey != publicKey || previousPrivateKeyRef != privateKeyRef) {
             touchKeyRevision()
         }
@@ -132,7 +132,7 @@ class SettingsChatKeyStore(
         val previousPublicKey = selfChatPublicKey()
         val previousPrivateKeyRef = selfChatPrivateKeyRef()
         keyValueStorage.putString(SELF_CHAT_PUBLIC_KEY, publicKey)
-        secureKeyValueStorage.putString(SELF_CHAT_PRIVATE_KEY, privateKeyRef.serialize())
+        savePrivateKeyRef(SELF_CHAT_PRIVATE_KEY, privateKeyRef)
         selfChatId()?.takeIf(String::isNotBlank)?.let { chatId ->
             saveChatKeyPair(chatId, publicKey, privateKeyRef)
         }
@@ -172,7 +172,7 @@ class SettingsChatKeyStore(
 
     override suspend fun clearChatState(chatId: String) {
         keyValueStorage.remove(chatPublicKeyKey(chatId))
-        secureKeyValueStorage.remove(chatPrivateKeyKey(chatId))
+        removePrivateKeyRef(chatPrivateKeyKey(chatId))
         keyValueStorage.remove(participantsKey(chatId))
         untrackChatId(chatId)
         touchKeyRevision()
@@ -304,17 +304,17 @@ class SettingsChatKeyStore(
     private suspend fun clearKnownKeyState() {
         trackedChatIds().forEach { chatId ->
             keyValueStorage.remove(chatPublicKeyKey(chatId))
-            secureKeyValueStorage.remove(chatPrivateKeyKey(chatId))
+            removePrivateKeyRef(chatPrivateKeyKey(chatId))
             keyValueStorage.remove(participantsKey(chatId))
         }
         keyValueStorage.remove(CHAT_IDS)
         keyValueStorage.remove(CURRENT_USER_ID)
         keyValueStorage.remove(CURRENT_USER_PUBLIC_KEY)
-        secureKeyValueStorage.remove(CURRENT_USER_PRIVATE_KEY)
+        removePrivateKeyRef(CURRENT_USER_PRIVATE_KEY)
         keyValueStorage.remove(SERVER_PUBLIC_KEY)
         keyValueStorage.remove(SELF_CHAT_ID)
         keyValueStorage.remove(SELF_CHAT_PUBLIC_KEY)
-        secureKeyValueStorage.remove(SELF_CHAT_PRIVATE_KEY)
+        removePrivateKeyRef(SELF_CHAT_PRIVATE_KEY)
         keyValueStorage.remove(DEVICE_ID)
     }
 
@@ -326,11 +326,51 @@ class SettingsChatKeyStore(
     }
 
     private suspend fun privateKeyRefOrNull(key: String): PrivateKeyRef? {
+        keyValueStorage.getStringOrNull(key)?.let { storedValue ->
+            val storedRef = parseStoredPrivateKeyRefOrNull(key, storedValue, keyValueStorage::remove)
+                ?: return null
+            if (storedRef is PrivateKeyRef.Exported) {
+                savePrivateKeyRef(key, storedRef)
+            }
+            return storedRef
+        }
+
         val storedValue = secureKeyValueStorage.getStringOrNull(key) ?: return null
+        val storedRef = parseStoredPrivateKeyRefOrNull(key, storedValue, secureKeyValueStorage::remove)
+            ?: return null
+        if (storedRef is PrivateKeyRef.PlatformAlias) {
+            savePrivateKeyRef(key, storedRef)
+        }
+        return storedRef
+    }
+
+    private suspend fun savePrivateKeyRef(key: String, privateKeyRef: PrivateKeyRef) {
+        when (privateKeyRef) {
+            is PrivateKeyRef.Exported -> {
+                secureKeyValueStorage.putString(key, privateKeyRef.serialize())
+                keyValueStorage.remove(key)
+            }
+            is PrivateKeyRef.PlatformAlias -> {
+                keyValueStorage.putString(key, privateKeyRef.serialize())
+                secureKeyValueStorage.remove(key)
+            }
+        }
+    }
+
+    private suspend fun removePrivateKeyRef(key: String) {
+        keyValueStorage.remove(key)
+        secureKeyValueStorage.remove(key)
+    }
+
+    private suspend fun parseStoredPrivateKeyRefOrNull(
+        key: String,
+        storedValue: String,
+        removeInvalidValue: suspend (String) -> Unit,
+    ): PrivateKeyRef? {
         return runCatching {
             PrivateKeyRef.deserialize(storedValue)
         }.getOrElse {
-            secureKeyValueStorage.remove(key)
+            removeInvalidValue(key)
             null
         }
     }
