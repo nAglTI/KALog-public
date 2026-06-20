@@ -11,6 +11,9 @@ import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberTrayState
+import java.awt.GraphicsEnvironment
+import java.awt.Taskbar
+import javax.imageio.ImageIO
 import org.debs.kalog.di.initKoin
 
 fun main() {
@@ -18,6 +21,7 @@ fun main() {
     if (!startupUnlock.allowed) return
 
     initKoin()
+    configureDesktopAppIcon()
 
     application {
         val trayState = rememberTrayState()
@@ -67,5 +71,19 @@ fun main() {
             }
             App(protectedDeviceLockAvailable = !startupUnlock.showReducedProtectionWarning)
         }
+    }
+}
+
+private fun configureDesktopAppIcon() {
+    if (GraphicsEnvironment.isHeadless()) return
+    runCatching {
+        if (!Taskbar.isTaskbarSupported()) return
+        val taskbar = Taskbar.getTaskbar()
+        if (!taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) return
+        val iconUrl = Thread.currentThread()
+            .contextClassLoader
+            .getResource("icons/mayday-chat.png")
+            ?: return
+        taskbar.iconImage = ImageIO.read(iconUrl)
     }
 }

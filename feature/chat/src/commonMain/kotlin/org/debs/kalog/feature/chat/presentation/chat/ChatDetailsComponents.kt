@@ -860,11 +860,16 @@ private fun MessageAttachmentChip(
     }
 
     val canRequestDownload = attachment.localUri == null && attachment.loadState.canRequestDownload()
+    val canOpen = attachment.localUri != null
     Surface(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = canRequestDownload) {
-                onRequestAttachmentDownload(attachment.id)
+            .clickable(enabled = canOpen || canRequestDownload) {
+                if (canOpen) {
+                    openLocalAttachment(attachment)
+                } else {
+                    onRequestAttachmentDownload(attachment.id)
+                }
             },
         shape = RoundedCornerShape(12.dp),
         color = if (isMine) {
@@ -2082,7 +2087,7 @@ private fun MediaAttachmentPreview(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .clickable(enabled = attachment.localUri != null) {
-                attachment.localUri?.let(::openLocalAttachment)
+                openLocalAttachment(attachment)
             },
         shape = RoundedCornerShape(14.dp),
         color = if (isMine) {

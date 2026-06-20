@@ -6,6 +6,15 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val isAppleHost = System.getProperty("os.name") == "Mac OS X"
 val desktopPackageVersion = "1.0.0"
 val desktopPackageDisplayName = "Mayday Chat"
+val desktopDiagnosticsEnabled = providers.gradleProperty("kalogDiagnostics")
+    .orElse(
+        if (gradle.startParameter.taskNames.any { taskName -> taskName.contains("Release", ignoreCase = true) }) {
+            "false"
+        } else {
+            "true"
+        },
+    )
+    .get()
 
 fun String.asDesktopArtifactNamePart(): String =
     replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_').ifBlank { "unknown" }
@@ -101,6 +110,10 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "org.debs.kalog.MainKt"
+        jvmArgs += listOf(
+            "-Dkalog.diagnostics=$desktopDiagnosticsEnabled",
+            "-Dkalog.diagnostics.file=true",
+        )
         buildTypes.release.proguard {
             isEnabled.set(false)
         }

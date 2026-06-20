@@ -1030,8 +1030,8 @@ internal class OfflineFirstChatRepository(
         }
         val existingChatIds = localDataSource.observeThreads().value.map(LocalChatThread::id).toSet()
         val listedChatIds = chatSummaries.map(RemoteChatSummary::id).toSet()
+        val seedMessages = chatSummaries.flatMap(RemoteChatSummary::seedMessages)
 
-        handleHistoricalNicknameMessages(chatSummaries.flatMap(RemoteChatSummary::seedMessages))
         val threads = chatSummaries.map { chat ->
             buildLocalThreadFromSummary(
                 summary = chat,
@@ -1044,12 +1044,11 @@ internal class OfflineFirstChatRepository(
             chatKeyStore.clearChatState(removedChatId)
         }
         localDataSource.upsertThreads(threads)
+        handleServiceMessages(seedMessages)
         if (lastPollTimestamp == null) {
             updateLastPollTimestamp(
-                chatSummaries.flatMap { chat ->
-                    chat.seedMessages.mapNotNull { message ->
-                        message.createdAt.takeIf { timestamp -> timestamp.isNotBlank() }
-                    }
+                seedMessages.mapNotNull { message ->
+                    message.createdAt.takeIf { timestamp -> timestamp.isNotBlank() }
                 },
             )
         }
@@ -1069,7 +1068,9 @@ internal class OfflineFirstChatRepository(
         val currentUserId = requireCurrentUserId()
         val chatInfo = remoteDataSource.getChatInfo(chatId)
         saveChatParticipants(chatId, chatInfo.users, currentUserId)
-        handleHistoricalNicknameMessages(seedMessages)
+        if (chatInfo.type.isSelfChatType()) {
+            rememberSelfChat(chatInfo.id)
+        }
         localDataSource.upsertThreads(
             listOf(
                 buildLocalThread(
@@ -1079,18 +1080,26 @@ internal class OfflineFirstChatRepository(
                 ),
             ),
         )
+        handleServiceMessages(seedMessages)
         if (!skipKeyRegistration) {
-            val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId }
-            val currentUserHasNoKey = chatInfo.users
-                .firstOrNull { it.userId == currentUserId }
-                ?.publicKey.isNullOrBlank()
-            val isPending = thread?.invitationStatus == INVITATION_STATUS_PENDING ||
-                currentUserHasNoKey
-            if (isPending) {
-                localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_PENDING)
-            } else {
-                ensureChatKeyRegistered(chatId)
+            if (chatInfo.type.isSelfChatType()) {
                 localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_ACCEPTED)
+            } else {
+                val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId }
+                val currentUserHasNoKey = chatInfo.users
+                    .firstOrNull { it.userId == currentUserId }
+                    ?.publicKey.isNullOrBlank()
+                val isPending = thread?.invitationStatus == INVITATION_STATUS_PENDING ||
+                    currentUserHasNoKey
+                if (isPending) {
+                    localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_PENDING)
+                } else {
+                    val keyReady = ensureChatKeyRegistered(chatId)
+                    localDataSource.updateInvitationStatus(
+                        chatId = chatId,
+                        status = if (keyReady) INVITATION_STATUS_ACCEPTED else INVITATION_STATUS_PENDING,
+                    )
+                }
             }
         }
         if (lastPollTimestamp == null) {
@@ -1106,12 +1115,21 @@ internal class OfflineFirstChatRepository(
         for (chatId in chatIds) {
             try {
                 syncChat(chatId, skipKeyRegistration = true)
+                val syncedThread = localDataSource.observeThreads().value.firstOrNull { thread -> thread.id == chatId }
+                if (syncedThread?.typeRaw?.toChatType() == ChatType.Self) {
+                    localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_ACCEPTED)
+                    syncedChatIds += chatId
+                    continue
+                }
                 val shouldRegisterKey = messagesByChatId[chatId]
                     .orEmpty()
                     .any { message -> !message.isServiceMessage() }
                 if (shouldRegisterKey) {
-                    ensureChatKeyRegistered(chatId)
-                    localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_ACCEPTED)
+                    val keyReady = ensureChatKeyRegistered(chatId)
+                    localDataSource.updateInvitationStatus(
+                        chatId = chatId,
+                        status = if (keyReady) INVITATION_STATUS_ACCEPTED else INVITATION_STATUS_PENDING,
+                    )
                 } else {
                     localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_PENDING)
                 }
@@ -1160,6 +1178,11 @@ internal class OfflineFirstChatRepository(
                     position = seedMessagesStartPosition + index,
                 )
             },
+            invitationStatus = if (chatInfo.type.isSelfChatType()) {
+                INVITATION_STATUS_ACCEPTED
+            } else {
+                existingThread?.invitationStatus ?: INVITATION_STATUS_NONE
+            },
         )
     }
 
@@ -1197,6 +1220,11 @@ internal class OfflineFirstChatRepository(
                         position = seedMessagesStartPosition + index,
                     )
                 },
+            invitationStatus = if (summary.type.isSelfChatType()) {
+                INVITATION_STATUS_ACCEPTED
+            } else {
+                existingThread?.invitationStatus ?: INVITATION_STATUS_NONE
+            },
         )
     }
 
@@ -1511,7 +1539,7 @@ internal class OfflineFirstChatRepository(
     }
 
     private suspend inline fun <reified T> decodeAccountServiceMessageData(message: RemoteMessage): T? {
-        if (message.chatId != chatKeyStore.selfChatId()) return null
+        if (!isSelfChatMessage(message.chatId)) return null
         val payloadChunks = message.chunks.drop(1)
         if (payloadChunks.isEmpty()) return null
         val decryptedPayload = chatMessageCipher.decryptIncomingBody(
@@ -1521,6 +1549,15 @@ internal class OfflineFirstChatRepository(
         ) ?: return null
         if (decryptedPayload.isBlank()) return null
         return runCatching { json.decodeFromString<T>(decryptedPayload) }.getOrNull()
+    }
+
+    private suspend fun isSelfChatMessage(chatId: String): Boolean {
+        if (chatId == chatKeyStore.selfChatId()) return true
+        val thread = localDataSource.observeThreads().value.firstOrNull { localThread -> localThread.id == chatId }
+        if (thread?.typeRaw?.toChatType() != ChatType.Self) return false
+
+        rememberSelfChat(chatId)
+        return true
     }
 
     private suspend fun isValidKeyPair(publicKey: String, privateKeyRef: PrivateKeyRef): Boolean {
@@ -1873,6 +1910,7 @@ internal class OfflineFirstChatRepository(
         private const val SERVICE_EVENT_NICKNAME_PROVIDED = "nickname_provided"
         private const val SERVICE_EVENT_ACCOUNT_KEY_SYNC = "account_key_sync_v1"
         private const val SERVICE_EVENT_ACCOUNT_KEY_SYNC_REQUEST = "account_key_sync_request_v1"
+        private const val INVITATION_STATUS_NONE = "none"
         private const val INVITATION_STATUS_PENDING = "pending"
         private const val INVITATION_STATUS_ACCEPTED = "accepted"
         private const val ATTACHMENT_UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024

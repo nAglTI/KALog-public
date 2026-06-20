@@ -184,14 +184,79 @@ private fun String.hasImageExtension(): Boolean {
 }
 
 internal actual fun openLocalAttachment(localUri: String): Boolean {
-    if (SecureJvmAttachmentStore.isSecureUri(localUri)) return false
+    return openLocalAttachment(localUri = localUri, fileName = null)
+}
+
+internal actual fun openLocalAttachment(attachment: ChatAttachment): Boolean {
+    val localUri = attachment.localUri ?: return false
+    return openLocalAttachment(localUri = localUri, fileName = attachment.name)
+}
+
+private fun openLocalAttachment(localUri: String, fileName: String?): Boolean {
+    if (!Desktop.isDesktopSupported()) return false
+    val file = localUri.toOpenableAttachmentFile(fileName) ?: return false
     return runCatching {
-        if (!Desktop.isDesktopSupported()) return false
-        val file = File(URI(localUri))
-        if (!file.isFile) return false
         Desktop.getDesktop().open(file)
         true
     }.getOrDefault(false)
+}
+
+private fun String.toOpenableAttachmentFile(fileName: String?): File? {
+    return if (SecureJvmAttachmentStore.isSecureUri(this)) {
+        runCatching {
+            val directory = File(System.getProperty("java.io.tmpdir"), OPEN_ATTACHMENT_CACHE_DIRECTORY)
+                .apply {
+                    mkdirs()
+                    deleteOldOpenAttachments()
+                }
+            val file = File(directory, "${System.currentTimeMillis()}-${fileName.safeOpenAttachmentFileName()}")
+            val copied = file.outputStream().use { output ->
+                var position = 0L
+                var success = true
+                while (true) {
+                    val chunk = SecureJvmAttachmentStore.read(this, position, OPEN_ATTACHMENT_COPY_BUFFER_BYTES)
+                    if (chunk == null) {
+                        success = false
+                        break
+                    }
+                    if (chunk.isEmpty()) break
+                    output.write(chunk)
+                    position += chunk.size
+                }
+                success
+            }
+            if (!copied || !file.isFile) {
+                file.delete()
+                null
+            } else {
+                file.deleteOnExit()
+                file
+            }
+        }.getOrNull()
+    } else {
+        runCatching { File(URI(this)).takeIf(File::isFile) }.getOrNull()
+    }
+}
+
+private fun File.deleteOldOpenAttachments() {
+    val threshold = System.currentTimeMillis() - OPEN_ATTACHMENT_CACHE_MAX_AGE_MS
+    listFiles()
+        .orEmpty()
+        .filter { file -> file.isFile && file.lastModified() < threshold }
+        .forEach { file -> runCatching { file.delete() } }
+}
+
+private fun String?.safeOpenAttachmentFileName(): String {
+    val rawName = this
+        ?.substringAfterLast('/')
+        ?.substringAfterLast('\\')
+        ?.trim()
+        .orEmpty()
+    val safeName = rawName
+        .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+        .trim('.', ' ')
+        .take(OPEN_ATTACHMENT_FILE_NAME_MAX_LENGTH)
+    return safeName.ifBlank { "attachment" }
 }
 
 internal actual fun playLocalAudio(
@@ -329,6 +394,10 @@ internal actual suspend fun toggleVoiceRecording(): VoiceRecordingResult = withC
 }
 
 private const val INLINE_ATTACHMENT_BYTES_LIMIT = 16L * 1024L * 1024L
+private const val OPEN_ATTACHMENT_CACHE_DIRECTORY = "mayday-chat-opened-attachments"
+private const val OPEN_ATTACHMENT_COPY_BUFFER_BYTES = 64 * 1024
+private const val OPEN_ATTACHMENT_CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
+private const val OPEN_ATTACHMENT_FILE_NAME_MAX_LENGTH = 180
 
 private object DesktopAudioPlayer {
     @Volatile

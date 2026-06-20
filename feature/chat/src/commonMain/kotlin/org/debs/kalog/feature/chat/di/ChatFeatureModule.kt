@@ -93,7 +93,7 @@ val chatFeatureModule = module {
     factory { SendChatMessageUseCase(get()) }
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
-    factory { AccountOnboardingViewModel(get(), get(), get(), get(), get()) }
+    factory { AccountOnboardingViewModel(get(), get(), get(), get(), get(), get()) }
     factory { ChatListViewModel(get(), get(), get(), get(), get()) }
     factory { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }

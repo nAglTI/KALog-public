@@ -3,4 +3,7 @@
     <cache-path
         name="account_backups"
         path="account-backups/" />
+    <cache-path
+        name="open_attachments"
+        path="open-attachments/" />
 </paths>

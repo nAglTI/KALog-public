@@ -33,6 +33,7 @@ import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.ChatType
 import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
+import org.debs.kalog.feature.chat.domain.model.InvitationStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -545,6 +546,58 @@ class OfflineFirstChatRepositoryJvmTest {
         assertEquals("self-private-key", keyStore.chatPrivateKey(selfChatId))
         assertEquals(ChatType.Self, selfThread.type)
         assertEquals("Saved Messages", selfThread.title)
+        assertEquals(InvitationStatus.Accepted, selfThread.invitationStatus)
+    }
+
+    @Test
+    fun startSession_marksListedSelfChatAcceptedWithoutManualInvitation() = runBlocking {
+        val selfChatId = "self-chat"
+        val keyStore = FakeChatKeyStore(
+            currentUserId = "user-1",
+            currentUserPublicKey = "transport-public-key",
+            currentUserPrivateKey = "transport-private-key",
+            serverPublicKey = "server-key",
+        )
+        keyStore.saveSelfChatKeyPair("self-public-key", PrivateKeyRef.Exported("self-private-key"))
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = selfChatId,
+                    title = "Saved Messages",
+                    type = "self",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                selfChatId to RemoteChatInfo(
+                    id = selfChatId,
+                    title = "Saved Messages",
+                    type = "self",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "self-public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            keyStore = keyStore,
+            encryptionService = FakeEncryptionService(
+                generatedKeyPair = GeneratedKeyPair(publicKey = "unused-public-key", privateKey = "unused-private-key"),
+            ),
+        )
+
+        repository.startSession()
+
+        val selfThread = repository.observeChats().first().single { chat -> chat.id == selfChatId }
+        assertEquals(selfChatId, keyStore.selfChatId())
+        assertEquals("self-private-key", keyStore.chatPrivateKey(selfChatId))
+        assertEquals(InvitationStatus.Accepted, selfThread.invitationStatus)
     }
 
     @Test
@@ -612,9 +665,185 @@ class OfflineFirstChatRepositoryJvmTest {
 
         assertEquals(null, keyStore.chatPrivateKey(chatId))
         assertTrue(remoteDataSource.setGroupChatPublicKeyCalls.isEmpty())
+        assertEquals(
+            InvitationStatus.Pending,
+            repository.observeChats().first().first { chat -> chat.id == chatId }.invitationStatus,
+        )
         val (_, payloads) = remoteDataSource.sentServiceMessages.single()
         assertEquals("user-1", payloads.single().recipientId)
         assertEquals("account_key_sync_request_v1", payloads.single().chunks.first())
+    }
+
+    @Test
+    fun startSession_answersHistoricalSelfChatKeySyncRequestFromAnotherDevice() = runBlocking {
+        val chatId = "chat-1"
+        val selfChatId = "self-chat"
+        val keyStore = FakeChatKeyStore(
+            currentUserId = "user-1",
+            currentUserPublicKey = "transport-public-key",
+            currentUserPrivateKey = "transport-private-key",
+            serverPublicKey = "server-key",
+        )
+        keyStore.saveChatKeyPair(chatId, "chat-public-key", "chat-private-key")
+        keyStore.saveSelfChatKeyPair("self-public-key", PrivateKeyRef.Exported("self-private-key"))
+        val syncRequestPayload = """
+            {
+              "eventId": "request-1",
+              "originDeviceId": "android-device",
+              "chatId": "$chatId",
+              "createdAtEpochMillis": 1
+            }
+        """.trimIndent()
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = selfChatId,
+                    title = "Saved Messages",
+                    type = "self",
+                    seedMessages = listOf(
+                        serviceMessage(
+                            chatId = selfChatId,
+                            id = "self-service-1",
+                            createdAt = "2026-03-21T10:00:00Z",
+                            eventType = "account_key_sync_request_v1",
+                            payload = syncRequestPayload,
+                        ),
+                    ),
+                ),
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                selfChatId to RemoteChatInfo(
+                    id = selfChatId,
+                    title = "Saved Messages",
+                    type = "self",
+                    users = listOf(RemoteChatUser(userId = "user-1", publicKey = "self-public-key")),
+                ),
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "chat-public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "user-2-public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            keyStore = keyStore,
+            encryptionService = FakeEncryptionService(
+                generatedKeyPair = GeneratedKeyPair(publicKey = "unused-public-key", privateKey = "unused-private-key"),
+            ),
+        )
+
+        repository.startSession()
+
+        assertEquals(selfChatId, keyStore.selfChatId())
+        assertEquals("self-private-key", keyStore.chatPrivateKey(selfChatId))
+        val (_, payloads) = remoteDataSource.sentServiceMessages.single()
+        assertEquals("user-1", payloads.single().recipientId)
+        assertEquals("account_key_sync_v1", payloads.single().chunks.first())
+        assertTrue(payloads.single().chunks.drop(1).joinToString("").contains("\"chatId\":\"$chatId\""))
+    }
+
+    @Test
+    fun startSession_importsHistoricalSelfChatKeySyncFromAnotherDevice() = runBlocking {
+        val chatId = "chat-1"
+        val selfChatId = "self-chat"
+        val keyStore = FakeChatKeyStore(
+            currentUserId = "user-1",
+            currentUserPublicKey = "transport-public-key",
+            currentUserPrivateKey = "transport-private-key",
+            serverPublicKey = "server-key",
+            autoStoreCurrentUserChatKeyFromParticipants = false,
+        )
+        keyStore.saveSelfChatKeyPair("self-public-key", PrivateKeyRef.Exported("self-private-key"))
+        val keySyncPayload = """
+            {
+              "eventId": "sync-1",
+              "originDeviceId": "windows-device",
+              "chatId": "$chatId",
+              "chatType": "group",
+              "publicKey": "chat-public-key",
+              "privateKeyRef": "exported:chat-private-key",
+              "createdAtEpochMillis": 1
+            }
+        """.trimIndent()
+        val remoteDataSource = FakeChatRemoteDataSource(
+            startSession = RemoteStartSession(
+                userId = "user-1",
+                serverPublicKey = "server-key",
+            ),
+            chats = listOf(
+                RemoteChatSummary(
+                    id = selfChatId,
+                    title = "Saved Messages",
+                    type = "self",
+                    seedMessages = listOf(
+                        serviceMessage(
+                            chatId = selfChatId,
+                            id = "self-service-1",
+                            createdAt = "2026-03-21T10:00:00Z",
+                            eventType = "account_key_sync_v1",
+                            payload = keySyncPayload,
+                        ),
+                    ),
+                ),
+                RemoteChatSummary(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    seedMessages = emptyList(),
+                ),
+            ),
+            chatInfoById = mapOf(
+                selfChatId to RemoteChatInfo(
+                    id = selfChatId,
+                    title = "Saved Messages",
+                    type = "self",
+                    users = listOf(RemoteChatUser(userId = "user-1", publicKey = "self-public-key")),
+                ),
+                chatId to RemoteChatInfo(
+                    id = chatId,
+                    title = "Group chat",
+                    type = "group",
+                    users = listOf(
+                        RemoteChatUser(userId = "user-1", publicKey = "chat-public-key"),
+                        RemoteChatUser(userId = "user-2", publicKey = "user-2-public-key"),
+                    ),
+                ),
+            ),
+            historyByOffset = emptyMap(),
+        )
+        val repository = createRepository(
+            remoteDataSource = remoteDataSource,
+            keyStore = keyStore,
+            encryptionService = FakeEncryptionService(
+                generatedKeyPair = GeneratedKeyPair(publicKey = "unused-public-key", privateKey = "unused-private-key"),
+            ),
+        )
+
+        repository.startSession()
+
+        assertEquals(selfChatId, keyStore.selfChatId())
+        assertEquals("chat-public-key", keyStore.chatPublicKey(chatId))
+        assertEquals("chat-private-key", keyStore.chatPrivateKey(chatId))
+        assertEquals(
+            InvitationStatus.Accepted,
+            repository.observeChats().first().first { chat -> chat.id == chatId }.invitationStatus,
+        )
     }
 
     @Test

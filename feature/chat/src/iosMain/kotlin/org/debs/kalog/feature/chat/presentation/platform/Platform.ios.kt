@@ -22,6 +22,8 @@ internal actual fun readDroppedAttachments(event: DragAndDropEvent): List<ChatAt
 
 internal actual fun openLocalAttachment(localUri: String): Boolean = false
 
+internal actual fun openLocalAttachment(attachment: ChatAttachment): Boolean = false
+
 internal actual fun playLocalAudio(
     localUri: String,
     onProgress: (positionMillis: Long, durationMillis: Long) -> Unit,

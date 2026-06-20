@@ -109,7 +109,22 @@ internal actual fun readClipboardAttachments(): List<ChatAttachment> = emptyList
 
 internal actual fun readDroppedAttachments(event: DragAndDropEvent): List<ChatAttachment> = emptyList()
 
-internal actual fun openLocalAttachment(localUri: String): Boolean = false
+internal actual fun openLocalAttachment(localUri: String): Boolean {
+    return AndroidChatPlatformBridge.openLocalAttachment(
+        localUri = localUri,
+        fileName = null,
+        mimeType = null,
+    )
+}
+
+internal actual fun openLocalAttachment(attachment: ChatAttachment): Boolean {
+    val localUri = attachment.localUri ?: return false
+    return AndroidChatPlatformBridge.openLocalAttachment(
+        localUri = localUri,
+        fileName = attachment.name,
+        mimeType = attachment.mimeType,
+    )
+}
 
 internal actual fun playLocalAudio(
     localUri: String,
@@ -472,6 +487,39 @@ object AndroidChatPlatformBridge {
         pendingAccountBackupBytes = CompletableDeferred()
         launcher.launch(arrayOf(ACCOUNT_BACKUP_MIME_TYPE, "*/*"))
         return pendingAccountBackupBytes.await()
+    }
+
+    internal fun openLocalAttachment(
+        localUri: String,
+        fileName: String?,
+        mimeType: String?,
+    ): Boolean {
+        val currentActivity = activity ?: return false
+        if (SecureAndroidAttachmentStore.isSecureUri(localUri)) {
+            Thread {
+                val file = runCatching {
+                    currentActivity.exportSecureAttachmentForOpen(localUri, fileName)
+                }.getOrNull() ?: return@Thread
+                val uri = FileProvider.getUriForFile(
+                    currentActivity,
+                    "${currentActivity.packageName}.fileprovider",
+                    file,
+                )
+                val resolvedMimeType = mimeType
+                    ?: SecureAndroidAttachmentStore.mimeType(localUri)
+                    ?: "*/*"
+                Handler(Looper.getMainLooper()).post {
+                    currentActivity.startOpenAttachmentIntent(uri, resolvedMimeType)
+                }
+            }.start()
+            return true
+        }
+
+        val uri = Uri.parse(localUri)
+        val resolvedMimeType = mimeType
+            ?: runCatching { currentActivity.contentResolver.getType(uri) }.getOrNull()
+            ?: "*/*"
+        return currentActivity.startOpenAttachmentIntent(uri, resolvedMimeType)
     }
 
     internal fun playLocalAudio(
@@ -926,6 +974,67 @@ private data class AttachmentMetadata(
     val sizeBytes: Long?,
 )
 
+private fun Context.startOpenAttachmentIntent(uri: Uri, mimeType: String): Boolean {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    return runCatching {
+        startActivity(Intent.createChooser(intent, "Open attachment"))
+        true
+    }.getOrDefault(false)
+}
+
+private fun Context.exportSecureAttachmentForOpen(localUri: String, fileName: String?): File? {
+    val directory = File(cacheDir, OPEN_ATTACHMENT_CACHE_DIRECTORY).apply {
+        mkdirs()
+        deleteOldOpenAttachments()
+    }
+    val file = File(directory, "${SystemClock.elapsedRealtime()}-${fileName.safeOpenAttachmentFileName()}")
+    val copied = file.outputStream().use { output ->
+        var position = 0L
+        var success = true
+        while (true) {
+            val chunk = SecureAndroidAttachmentStore.read(localUri, position, OPEN_ATTACHMENT_COPY_BUFFER_BYTES)
+            if (chunk == null) {
+                success = false
+                break
+            }
+            if (chunk.isEmpty()) break
+            output.write(chunk)
+            position += chunk.size
+        }
+        success
+    }
+    return if (copied && file.isFile) {
+        file
+    } else {
+        file.delete()
+        null
+    }
+}
+
+private fun File.deleteOldOpenAttachments() {
+    val threshold = System.currentTimeMillis() - OPEN_ATTACHMENT_CACHE_MAX_AGE_MS
+    listFiles()
+        .orEmpty()
+        .filter { file -> file.isFile && file.lastModified() < threshold }
+        .forEach { file -> runCatching { file.delete() } }
+}
+
+private fun String?.safeOpenAttachmentFileName(): String {
+    val rawName = this
+        ?.substringAfterLast('/')
+        ?.substringAfterLast('\\')
+        ?.trim()
+        .orEmpty()
+    val safeName = rawName
+        .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+        .trim('.', ' ')
+        .take(OPEN_ATTACHMENT_FILE_NAME_MAX_LENGTH)
+    return safeName.ifBlank { "attachment" }
+}
+
 private fun String?.toAttachmentKind(): ChatAttachmentKind {
     return when {
         this?.startsWith("image/") == true -> ChatAttachmentKind.Image
@@ -936,6 +1045,10 @@ private fun String?.toAttachmentKind(): ChatAttachmentKind {
 }
 
 private const val INLINE_ATTACHMENT_BYTES_LIMIT = 16L * 1024L * 1024L
+private const val OPEN_ATTACHMENT_CACHE_DIRECTORY = "open-attachments"
+private const val OPEN_ATTACHMENT_COPY_BUFFER_BYTES = 64 * 1024
+private const val OPEN_ATTACHMENT_CACHE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
+private const val OPEN_ATTACHMENT_FILE_NAME_MAX_LENGTH = 180
 private const val CHAT_VIDEO_PLAYER_TAG = "KALogVideoPlayer"
 private const val VOICE_RECORDER_TAG = "KALogVoiceRecorder"
 private const val VOICE_RECORDING_CHANNELS = 1

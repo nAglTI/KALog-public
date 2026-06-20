@@ -22,6 +22,8 @@ internal expect fun readDroppedAttachments(event: DragAndDropEvent): List<ChatAt
 
 internal expect fun openLocalAttachment(localUri: String): Boolean
 
+internal expect fun openLocalAttachment(attachment: ChatAttachment): Boolean
+
 internal expect fun playLocalAudio(
     localUri: String,
     onProgress: (positionMillis: Long, durationMillis: Long) -> Unit,

@@ -11,6 +11,7 @@ import org.debs.kalog.feature.chat.data.account.AccountBackupManager
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
+import org.debs.kalog.feature.chat.domain.usecase.EnsureSelfChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
 import org.debs.kalog.feature.chat.presentation.text.uiText
 import mayday_chat.feature.chat.generated.resources.Res
@@ -21,6 +22,7 @@ class AccountOnboardingViewModel(
     private val accountBackupManager: AccountBackupManager,
     private val clearAllChatDataUseCase: ClearAllChatDataUseCase,
     private val getCurrentUserIdUseCase: GetCurrentUserIdUseCase,
+    private val ensureSelfChatUseCase: EnsureSelfChatUseCase,
     private val chatKeyStore: ChatKeyStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(AccountOnboardingUiState())
@@ -74,6 +76,7 @@ class AccountOnboardingViewModel(
                 clearAllChatDataUseCase()
                 val userId = getCurrentUserIdUseCase()?.ifBlank { null }
                 check(userId != null && hasLocalAccount())
+                ensureSelfChatUseCase()
                 chatPreferencesDataSource.setAccountOnboardingCompleted(true)
                 _state.update { it.copy(isReady = true) }
             } catch (error: CancellationException) {
