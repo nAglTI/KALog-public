@@ -10,6 +10,7 @@ import com.sun.jna.platform.win32.Crypt32Util
 import com.sun.jna.platform.win32.WinCrypt.CRYPTPROTECT_UI_FORBIDDEN
 import com.sun.jna.ptr.PointerByReference
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Locale
@@ -111,10 +112,11 @@ private class MacOsKeychainVaultSecureKeyValueStorage(
     private var cachedMasterKey: SecretKeySpec? = null
 
     override suspend fun getStringOrNull(key: String): String? {
-        val storedValue = preferences.get(vaultPreferenceKey(key), null)
+        val preferenceKey = vaultPreferenceKey(key)
+        val storedValue = preferences.get(preferenceKey, null)
         if (storedValue != null) {
             return decryptValue(storedValue).getOrElse {
-                preferences.remove(vaultPreferenceKey(key))
+                preferences.remove(preferenceKey)
                 preferences.flush()
                 null
             }
@@ -194,15 +196,18 @@ private class MacOsKeychainVaultSecureKeyValueStorage(
     }
 
     private fun vaultPreferenceKey(key: String): String {
+        val keyDigest = MessageDigest
+            .getInstance("SHA-256")
+            .digest(key.toByteArray(StandardCharsets.UTF_8))
         val encodedKey = Base64.getUrlEncoder()
             .withoutPadding()
-            .encodeToString(key.toByteArray(StandardCharsets.UTF_8))
+            .encodeToString(keyDigest)
         return "$VAULT_PREFERENCE_PREFIX$encodedKey"
     }
 
     private companion object {
         private const val MASTER_KEY_ACCOUNT = "__mayday_secure_vault_master_key_v1__"
-        private const val VAULT_PREFERENCE_PREFIX = "vault.v1."
+        private const val VAULT_PREFERENCE_PREFIX = "vault.v2."
         private const val VAULT_VALUE_PREFIX = "aesgcm:v1:"
         private const val AES_ALGORITHM = "AES"
         private const val AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding"
