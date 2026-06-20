@@ -10,9 +10,13 @@ import com.sun.jna.platform.win32.Crypt32Util
 import com.sun.jna.platform.win32.WinCrypt.CRYPTPROTECT_UI_FORBIDDEN
 import com.sun.jna.ptr.PointerByReference
 import java.nio.charset.StandardCharsets
+import java.security.SecureRandom
 import java.util.Base64
 import java.util.Locale
 import java.util.prefs.Preferences
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class JvmSecureKeyValueStorageFactory(
     private val applicationId: String,
@@ -22,7 +26,7 @@ class JvmSecureKeyValueStorageFactory(
         val normalizedOsName = osName.lowercase(Locale.US)
 
         return when {
-            normalizedOsName.contains("mac") -> MacOsKeychainSecureKeyValueStorage(
+            normalizedOsName.contains("mac") -> MacOsKeychainVaultSecureKeyValueStorage(
                 serviceName = secureStorageName(applicationId, name),
             )
 
@@ -96,10 +100,126 @@ private class WindowsDpapiSecureKeyValueStorage(
     }
 }
 
+private class MacOsKeychainVaultSecureKeyValueStorage(
+    serviceName: String,
+) : SecureKeyValueStorage {
+    private val preferences = Preferences.userRoot().node("$serviceName.secure-vault")
+    private val keychain = MacOsKeychainSecureKeyValueStorage(serviceName)
+    private val random = SecureRandom()
+
+    @Volatile
+    private var cachedMasterKey: SecretKeySpec? = null
+
+    override suspend fun getStringOrNull(key: String): String? {
+        val storedValue = preferences.get(vaultPreferenceKey(key), null)
+        if (storedValue != null) {
+            return decryptValue(storedValue).getOrElse {
+                preferences.remove(vaultPreferenceKey(key))
+                preferences.flush()
+                null
+            }
+        }
+
+        val legacyValue = keychain.getStringOrNull(key) ?: return null
+        putString(key, legacyValue)
+        keychain.remove(key)
+        return legacyValue
+    }
+
+    override suspend fun putString(key: String, value: String) {
+        preferences.put(vaultPreferenceKey(key), encryptValue(value))
+        preferences.flush()
+        keychain.remove(key)
+    }
+
+    override suspend fun remove(key: String) {
+        preferences.remove(vaultPreferenceKey(key))
+        preferences.flush()
+        keychain.remove(key)
+    }
+
+    override suspend fun clear() {
+        preferences.clear()
+        preferences.flush()
+        keychain.clear()
+        cachedMasterKey = null
+    }
+
+    private fun encryptValue(value: String): String {
+        val nonce = ByteArray(AES_GCM_NONCE_BYTES).also(random::nextBytes)
+        val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, masterKey(), GCMParameterSpec(AES_GCM_TAG_BITS, nonce))
+        val ciphertext = cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8))
+        return VAULT_VALUE_PREFIX + Base64.getEncoder().encodeToString(nonce + ciphertext)
+    }
+
+    private fun decryptValue(storedValue: String): Result<String> = runCatching {
+        require(storedValue.startsWith(VAULT_VALUE_PREFIX)) { "Unsupported macOS secure vault value." }
+        val bytes = Base64.getDecoder().decode(storedValue.removePrefix(VAULT_VALUE_PREFIX))
+        require(bytes.size > AES_GCM_NONCE_BYTES) { "macOS secure vault value is too short." }
+        val nonce = bytes.copyOfRange(0, AES_GCM_NONCE_BYTES)
+        val ciphertext = bytes.copyOfRange(AES_GCM_NONCE_BYTES, bytes.size)
+        val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, masterKey(), GCMParameterSpec(AES_GCM_TAG_BITS, nonce))
+        cipher.doFinal(ciphertext).toString(StandardCharsets.UTF_8)
+    }
+
+    private fun masterKey(): SecretKeySpec {
+        cachedMasterKey?.let { return it }
+        return synchronized(this) {
+            cachedMasterKey ?: loadOrCreateMasterKey().also { key ->
+                cachedMasterKey = key
+            }
+        }
+    }
+
+    private fun loadOrCreateMasterKey(): SecretKeySpec {
+        val storedMasterKey = runBlockingKeychainRead()
+        val keyBytes = if (storedMasterKey != null) {
+            Base64.getDecoder().decode(storedMasterKey)
+        } else {
+            ByteArray(AES_KEY_BYTES).also(random::nextBytes).also { generatedKey ->
+                keychain.putStringBlocking(
+                    key = MASTER_KEY_ACCOUNT,
+                    value = Base64.getEncoder().encodeToString(generatedKey),
+                )
+            }
+        }
+        require(keyBytes.size == AES_KEY_BYTES) { "Invalid macOS secure vault master key size." }
+        return SecretKeySpec(keyBytes, AES_ALGORITHM)
+    }
+
+    private fun runBlockingKeychainRead(): String? {
+        return keychain.getStringOrNullBlocking(MASTER_KEY_ACCOUNT)
+    }
+
+    private fun vaultPreferenceKey(key: String): String {
+        val encodedKey = Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(key.toByteArray(StandardCharsets.UTF_8))
+        return "$VAULT_PREFERENCE_PREFIX$encodedKey"
+    }
+
+    private companion object {
+        private const val MASTER_KEY_ACCOUNT = "__mayday_secure_vault_master_key_v1__"
+        private const val VAULT_PREFERENCE_PREFIX = "vault.v1."
+        private const val VAULT_VALUE_PREFIX = "aesgcm:v1:"
+        private const val AES_ALGORITHM = "AES"
+        private const val AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding"
+        private const val AES_KEY_BYTES = 32
+        private const val AES_GCM_NONCE_BYTES = 12
+        private const val AES_GCM_TAG_BITS = 128
+    }
+}
+
 private class MacOsKeychainSecureKeyValueStorage(
     private val serviceName: String,
 ) : SecureKeyValueStorage {
     override suspend fun getStringOrNull(key: String): String? {
+        return getStringOrNullBlocking(key)
+    }
+
+    fun getStringOrNullBlocking(key: String): String? {
         val query = passwordQuery(account = key, returnData = true)
         try {
             val result = PointerByReference()
@@ -122,6 +242,10 @@ private class MacOsKeychainSecureKeyValueStorage(
     }
 
     override suspend fun putString(key: String, value: String) {
+        putStringBlocking(key, value)
+    }
+
+    fun putStringBlocking(key: String, value: String) {
         val valueBytes = value.toByteArray(StandardCharsets.UTF_8)
         val query = passwordQuery(account = key, returnData = false)
         try {

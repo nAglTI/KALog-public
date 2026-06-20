@@ -31,6 +31,12 @@ class JvmPlatformRsaOaepEncryptionService(
         val normalizedOsName = System.getProperty("os.name").orEmpty().lowercase(Locale.US)
         when {
             normalizedOsName.contains("windows") -> WindowsCngRsaPrivateKeyBackend(applicationId)
+            else -> null
+        }
+    }
+    private val legacyBackend: JvmRsaPrivateKeyBackend? by lazy {
+        val normalizedOsName = System.getProperty("os.name").orEmpty().lowercase(Locale.US)
+        when {
             normalizedOsName.contains("mac") -> MacOsSecKeyRsaPrivateKeyBackend(applicationId)
             else -> null
         }
@@ -113,11 +119,10 @@ class JvmPlatformRsaOaepEncryptionService(
     }
 
     private fun platformBackendFor(privateKeyRef: PrivateKeyRef.PlatformAlias): JvmRsaPrivateKeyBackend {
-        val platformBackend = checkNotNull(backend) {
+        val platformBackend = listOfNotNull(backend, legacyBackend)
+            .firstOrNull { candidate -> candidate.providerId == privateKeyRef.provider }
+        checkNotNull(platformBackend) {
             "Platform private key reference '${privateKeyRef.provider}' cannot be used on this desktop OS."
-        }
-        check(platformBackend.providerId == privateKeyRef.provider) {
-            "Platform private key provider '${privateKeyRef.provider}' is not available on this desktop OS."
         }
         return platformBackend
     }

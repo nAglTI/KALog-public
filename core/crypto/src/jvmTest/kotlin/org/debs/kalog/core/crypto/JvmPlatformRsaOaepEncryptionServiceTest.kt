@@ -3,6 +3,7 @@ package org.debs.kalog.core.crypto
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 
 class JvmPlatformRsaOaepEncryptionServiceTest {
@@ -25,7 +26,11 @@ class JvmPlatformRsaOaepEncryptionServiceTest {
         val keyPair = service.generateKeyPair()
 
         try {
-            assertIs<PrivateKeyRef.PlatformAlias>(keyPair.privateKeyRef)
+            if (platformPrivateKeysEnabled()) {
+                assertIs<PrivateKeyRef.PlatformAlias>(keyPair.privateKeyRef)
+            } else {
+                assertIs<PrivateKeyRef.Exported>(keyPair.privateKeyRef)
+            }
             val chunks = service.encryptToChunks("hello platform key", keyPair.publicKey)
 
             assertEquals(
@@ -45,7 +50,10 @@ class JvmPlatformRsaOaepEncryptionServiceTest {
         val keyPair = service.generateKeyPair()
 
         try {
-            assertIs<PrivateKeyRef.PlatformAlias>(keyPair.privateKeyRef)
+            assertTrue(
+                keyPair.privateKeyRef is PrivateKeyRef.PlatformAlias ||
+                    keyPair.privateKeyRef is PrivateKeyRef.Exported,
+            )
             val exportedPrivateKey = service.exportPrivateKey(keyPair.privateKeyRef)
             val chunks = service.encryptToChunks("backup portable key", keyPair.publicKey)
 
@@ -72,7 +80,11 @@ class JvmPlatformRsaOaepEncryptionServiceTest {
                 publicKey = keyPair.publicKey,
                 privateKey = exportedPrivateKey,
             )
-            assertIs<PrivateKeyRef.PlatformAlias>(importedPrivateKeyRef)
+            if (platformPrivateKeysEnabled()) {
+                assertIs<PrivateKeyRef.PlatformAlias>(importedPrivateKeyRef)
+            } else {
+                assertIs<PrivateKeyRef.Exported>(importedPrivateKeyRef)
+            }
 
             val chunks = service.encryptToChunks("imported platform key", keyPair.publicKey)
             assertEquals(
@@ -83,5 +95,11 @@ class JvmPlatformRsaOaepEncryptionServiceTest {
             service.deletePrivateKey(keyPair.privateKeyRef)
             importedPrivateKeyRef?.let { service.deletePrivateKey(it) }
         }
+    }
+
+    private fun platformPrivateKeysEnabled(): Boolean {
+        return System.getProperty("os.name")
+            .orEmpty()
+            .contains("windows", ignoreCase = true)
     }
 }

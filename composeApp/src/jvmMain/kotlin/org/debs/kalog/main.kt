@@ -25,7 +25,7 @@ fun main() {
 
     application {
         val trayState = rememberTrayState()
-        val appIcon = painterResource("icons/mayday-chat.png")
+        val appIcon = painterResource(desktopIconResourcePath())
         var isWindowVisible by remember { mutableStateOf(true) }
         var trayNotificationShown by remember { mutableStateOf(false) }
         var reducedProtectionWarningShown by remember { mutableStateOf(false) }
@@ -82,8 +82,16 @@ private fun configureDesktopAppIcon() {
         if (!taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) return
         val iconUrl = Thread.currentThread()
             .contextClassLoader
-            .getResource("icons/mayday-chat.png")
+            .getResource(desktopIconResourcePath())
             ?: return
         taskbar.iconImage = ImageIO.read(iconUrl)
+    }
+}
+
+private fun desktopIconResourcePath(): String {
+    return if (System.getProperty("os.name").orEmpty().contains("mac", ignoreCase = true)) {
+        "icons/mayday-chat-macos.png"
+    } else {
+        "icons/mayday-chat.png"
     }
 }
