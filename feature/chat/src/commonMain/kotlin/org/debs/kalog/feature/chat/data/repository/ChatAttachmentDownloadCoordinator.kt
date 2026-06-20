@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -128,7 +129,7 @@ internal class ChatAttachmentDownloadCoordinator(
 
                 downloadSemaphore.withPermit {
                     updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Downloading)
-                    val cachedFile = downloadAndCacheAttachment(attachment)
+                    val cachedFile = downloadAndCacheAttachmentWithRetry(attachment, userInitiated)
                     if (cachedFile != null) {
                         rememberCachedAttachmentFile(attachment.id, cachedFile)
                         updateAttachmentLoadState(attachment.id, ChatAttachmentLoadState.Ready)
@@ -244,5 +245,32 @@ internal class ChatAttachmentDownloadCoordinator(
                     }
             }
         }
+    }
+
+    private suspend fun downloadAndCacheAttachmentWithRetry(
+        attachment: ChatAttachment,
+        userInitiated: Boolean,
+    ): CachedChatAttachment? {
+        val attempts = if (userInitiated) USER_INITIATED_DOWNLOAD_ATTEMPTS else AUTOMATIC_DOWNLOAD_ATTEMPTS
+        repeat(attempts) { attemptIndex ->
+            try {
+                downloadAndCacheAttachment(attachment)?.let { cachedFile -> return cachedFile }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // A freshly uploaded attachment can be visible in the message before storage serves it.
+            }
+            if (attemptIndex < attempts - 1) {
+                delay(DOWNLOAD_RETRY_DELAYS_MS.getOrElse(attemptIndex) { DOWNLOAD_RETRY_DELAYS_MS.last() })
+            }
+        }
+        return null
+    }
+
+    private companion object {
+        private const val AUTOMATIC_ATTACHMENT_SCHEDULE_BATCH_SIZE = 12
+        private const val AUTOMATIC_DOWNLOAD_ATTEMPTS = 5
+        private const val USER_INITIATED_DOWNLOAD_ATTEMPTS = 8
+        private val DOWNLOAD_RETRY_DELAYS_MS = listOf(500L, 1_000L, 2_000L, 4_000L, 6_000L, 8_000L, 10_000L)
     }
 }

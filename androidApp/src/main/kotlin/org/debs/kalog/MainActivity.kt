@@ -18,7 +18,6 @@ import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.platform.AndroidChatPlatformBridge
 
 class MainActivity : FragmentActivity() {
@@ -153,30 +152,13 @@ class MainActivity : FragmentActivity() {
         return keyguardManager.isDeviceSecure
     }
 
-    private companion object {
-        private fun appLockTitle(): String = chatLocalized(
-            en = "Unlock Mayday Chat",
-            ru = "Разблокируйте Mayday Chat",
-        )
+    private fun appLockTitle(): String = getString(R.string.app_lock_title)
 
-        private fun appLockSubtitle(): String = chatLocalized(
-            en = "Use fingerprint, face, PIN, pattern, or password.",
-            ru = "Используйте отпечаток, лицо, PIN-код, графический ключ или пароль.",
-        )
+    private fun appLockSubtitle(): String = getString(R.string.app_lock_subtitle)
 
-        private fun appLockUnavailableMessage(): String = chatLocalized(
-            en = "Set up a secure screen lock to open Mayday Chat.",
-            ru = "Настройте безопасную блокировку экрана, чтобы открыть Mayday Chat.",
-        )
+    private fun appLockUnavailableMessage(): String = getString(R.string.app_lock_unavailable_message)
 
-        private fun reducedProtectionTitle(): String = chatLocalized(
-            en = "Device lock is disabled",
-            ru = "Блокировка устройства отключена",
-        )
+    private fun reducedProtectionTitle(): String = getString(R.string.reduced_protection_title)
 
-        private fun reducedProtectionMessage(): String = chatLocalized(
-            en = "Mayday Chat opened without system authentication because this device has no secure screen lock. Account access, backup import, UUID registration, and key generation are disabled until you set up a PIN, pattern, password, or biometric unlock in system settings.",
-            ru = "Mayday Chat открыт без системной аутентификации, потому что на устройстве нет безопасной блокировки экрана. Доступ к аккаунту, импорт резервных копий, регистрация UUID и генерация ключей отключены, пока вы не настроите PIN-код, графический ключ, пароль или биометрическую разблокировку в системных настройках.",
-        )
-    }
+    private fun reducedProtectionMessage(): String = getString(R.string.reduced_protection_message)
 }

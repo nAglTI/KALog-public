@@ -1,6 +1,7 @@
 package org.debs.kalog.feature.chat.presentation.settings
 
 import org.debs.kalog.feature.chat.data.preferences.AppThemeMode
+import org.debs.kalog.feature.chat.presentation.text.UiText
 
 data class SettingsUiState(
     val nickname: String = "",
@@ -14,7 +15,7 @@ data class SettingsUiState(
     val desktopAutostartError: Boolean = false,
     val mediaCacheRetentionDays: String = "7",
     val isClearingMediaCache: Boolean = false,
-    val mediaCacheMessage: String? = null,
+    val mediaCacheMessage: UiText? = null,
     val backupPassword: String = "",
     val backupPasswordConfirmation: String = "",
     val importBackupPassword: String = "",
@@ -24,8 +25,8 @@ data class SettingsUiState(
     val accountBackupCanShare: Boolean = false,
     val accountBackupStale: Boolean = false,
     val accountBackupDeviceBoundKeyCount: Int = 0,
-    val accountBackupMessage: String? = null,
-    val accountBackupError: String? = null,
+    val accountBackupMessage: UiText? = null,
+    val accountBackupError: UiText? = null,
     val nicknameSaved: Boolean = false,
     val nicknameSaveError: Boolean = false,
 ) {

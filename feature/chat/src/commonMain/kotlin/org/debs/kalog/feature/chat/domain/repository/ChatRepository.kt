@@ -27,6 +27,8 @@ interface ChatRepository {
 
     suspend fun openChat(chatId: String)
 
+    suspend fun refreshChatMessages(chatId: String): Boolean = false
+
     suspend fun loadMoreMessages(chatId: String): Boolean
 
     suspend fun sendMessage(
@@ -46,6 +48,8 @@ interface ChatRepository {
     suspend fun createDirectChat(targetUserId: String): String
 
     suspend fun createGroupChat(publicKey: String? = null): String
+
+    suspend fun ensureSelfChat(): String = error("Self chat is not implemented.")
 
     suspend fun inviteUserToChat(chatId: String, userId: String)
 

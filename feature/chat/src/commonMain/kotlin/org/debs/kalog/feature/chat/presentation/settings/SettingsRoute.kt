@@ -11,9 +11,11 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
-import org.debs.kalog.feature.chat.localization.chatLocalized
-import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 import org.debs.kalog.feature.chat.presentation.components.ConfirmActionDialog
+import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -48,15 +50,9 @@ fun SettingsRoute(
 
     if (isClearDataDialogVisible) {
         ConfirmActionDialog(
-            title = chatLocalized(
-                en = "Clear all app data",
-                ru = "Очистить все данные приложения",
-            ),
-            message = chatLocalized(
-                en = "Local chat cache, keys, settings, and secure storage will be deleted. The app will close if possible.",
-                ru = "Будут удалены локальный кэш чатов, ключи, настройки и защищённое хранилище. Приложение закроется, если это возможно.",
-            ),
-            confirmLabel = chatLocalized(en = "Continue", ru = "Продолжить"),
+            title = stringResource(Res.string.clear_all_app_data),
+            message = stringResource(Res.string.clear_all_app_data_message),
+            confirmLabel = stringResource(Res.string.continue_label),
             onDismiss = {
                 if (!state.isClearingData) {
                     isClearDataDialogVisible = false

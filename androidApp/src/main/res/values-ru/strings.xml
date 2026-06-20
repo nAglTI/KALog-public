@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Mayday Chat</string>
+    <string name="app_lock_title">Разблокируйте Mayday Chat</string>
+    <string name="app_lock_subtitle">Используйте отпечаток, лицо, PIN-код, графический ключ или пароль.</string>
+    <string name="app_lock_unavailable_message">Настройте безопасную блокировку экрана, чтобы открыть Mayday Chat.</string>
+    <string name="reduced_protection_title">Блокировка устройства отключена</string>
+    <string name="reduced_protection_message">Mayday Chat открыт без системной аутентификации, потому что на устройстве нет безопасной блокировки экрана. Доступ к аккаунту, импорт резервных копий, регистрация UUID и генерация ключей отключены, пока вы не настроите PIN-код, графический ключ, пароль или биометрическую разблокировку в системных настройках.</string>
+</resources>

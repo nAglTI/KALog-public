@@ -7,6 +7,7 @@ import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.ChatType
 import org.debs.kalog.feature.chat.domain.model.InvitationStatus
 import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
+import org.debs.kalog.feature.chat.presentation.text.UiText
 
 data class ChatDetailsUiState(
     val title: String = "",
@@ -77,7 +78,7 @@ sealed interface ChatDetailsEffect {
 
     data object InvitationDeclined : ChatDetailsEffect
 
-    data class ShowError(val message: String) : ChatDetailsEffect
+    data class ShowError(val message: UiText) : ChatDetailsEffect
 
-    data class ShowMessage(val message: String) : ChatDetailsEffect
+    data class ShowMessage(val message: UiText) : ChatDetailsEffect
 }

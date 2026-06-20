@@ -143,6 +143,11 @@ class AccountBackupManager(
             currentUserPrivateKeyRef = PrivateKeyRef.deserialize(currentUserPrivateKeyRef)
                 .exportForBackup()
                 .serialize(),
+            selfChatPrivateKeyRef = selfChatPrivateKeyRef?.let { serialized ->
+                PrivateKeyRef.deserialize(serialized)
+                    .exportForBackup()
+                    .serialize()
+            },
             chatKeys = chatKeys.map { keyPair ->
                 keyPair.copy(
                     privateKeyRef = PrivateKeyRef.deserialize(keyPair.privateKeyRef)
@@ -175,9 +180,20 @@ class AccountBackupManager(
                         .serialize(),
                 )
             }
+            val importedSelfChatPrivateKey = if (!selfChatPublicKey.isNullOrBlank() && !selfChatPrivateKeyRef.isNullOrBlank()) {
+                PrivateKeyRef.deserialize(selfChatPrivateKeyRef)
+                    .importFromBackup(
+                        publicKey = selfChatPublicKey,
+                        importedPrivateKeys = importedPrivateKeys,
+                    )
+                    .serialize()
+            } else {
+                selfChatPrivateKeyRef
+            }
             PlatformSnapshotImport(
                 snapshot = copy(
                     currentUserPrivateKeyRef = currentUserImportedPrivateKey.serialize(),
+                    selfChatPrivateKeyRef = importedSelfChatPrivateKey,
                     chatKeys = importedChatKeys,
                 ),
                 importedPrivateKeys = importedPrivateKeys.toList(),
@@ -255,7 +271,8 @@ class AccountBackupManager(
     }
 
     private fun ChatKeySnapshot.deviceBoundPrivateKeyCount(): Int {
-        val refs = listOf(currentUserPrivateKeyRef) + chatKeys.map { key -> key.privateKeyRef }
+        val refs = listOfNotNull(currentUserPrivateKeyRef, selfChatPrivateKeyRef) +
+            chatKeys.map { key -> key.privateKeyRef }
         return refs.count { serialized ->
             runCatching { PrivateKeyRef.deserialize(serialized) }
                 .getOrNull() is PrivateKeyRef.PlatformAlias

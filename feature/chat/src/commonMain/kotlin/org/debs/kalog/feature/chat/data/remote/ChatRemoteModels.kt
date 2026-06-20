@@ -45,6 +45,12 @@ data class RemoteChatCreated(
     val type: String,
 )
 
+sealed interface RemoteCreateSelfChatResult {
+    data class Created(val chat: RemoteChatCreated) : RemoteCreateSelfChatResult
+
+    data object AlreadyExists : RemoteCreateSelfChatResult
+}
+
 data class RemotePolledMessages(
     val messages: List<RemoteMessage>,
     val timestamp: String,

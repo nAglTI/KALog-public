@@ -12,7 +12,9 @@ import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import org.debs.kalog.feature.chat.presentation.text.uiText
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 
 class AccountOnboardingViewModel(
     private val chatPreferencesDataSource: ChatPreferencesDataSource,
@@ -79,10 +81,7 @@ class AccountOnboardingViewModel(
             } catch (_: Throwable) {
                 _state.update {
                     it.copy(
-                        error = chatLocalized(
-                            en = "Could not prepare a new account.",
-                            ru = "Не удалось подготовить новый аккаунт.",
-                        ),
+                        error = uiText(Res.string.could_not_prepare_new_account),
                     )
                 }
             }
@@ -101,28 +100,21 @@ class AccountOnboardingViewModel(
                     _state.update {
                         it.copy(
                             isImporting = false,
-                            message = chatLocalized(en = "Import cancelled.", ru = "Импорт отменён."),
+                            message = uiText(Res.string.import_cancelled),
                         )
                     }
                     return@launch
                 }
                 chatPreferencesDataSource.setAccountOnboardingCompleted(true)
-                val warning = if (result.deviceBoundPrivateKeyCount > 0) {
-                    chatLocalized(
-                        en = " Some desktop keys can only be reused where the corresponding system keys still exist.",
-                        ru = " Некоторые ключи настольной версии можно использовать только там, где ещё существуют соответствующие системные ключи.",
-                    )
-                } else {
-                    ""
-                }
                 _state.update {
                     it.copy(
                         isImporting = false,
                         isReady = true,
-                        message = chatLocalized(
-                            en = "Imported account ${result.userId}.${warning}",
-                            ru = "Импортирован аккаунт ${result.userId}.${warning}",
-                        ),
+                        message = if (result.deviceBoundPrivateKeyCount > 0) {
+                            uiText(Res.string.imported_account_with_device_bound_warning, result.userId)
+                        } else {
+                            uiText(Res.string.imported_account, result.userId)
+                        },
                     )
                 }
             } catch (error: CancellationException) {
@@ -146,9 +138,6 @@ class AccountOnboardingViewModel(
     }
 
     private companion object {
-        private fun importBackupFailedMessage(): String = chatLocalized(
-            en = "Could not import this backup. Create a new backup on the source device or create a new account.",
-            ru = "Не удалось импортировать эту резервную копию. Создайте новую копию на исходном устройстве или создайте новый аккаунт.",
-        )
+        private fun importBackupFailedMessage() = uiText(Res.string.could_not_import_backup)
     }
 }

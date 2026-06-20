@@ -1,51 +1,161 @@
 package org.debs.kalog.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 private val LightKalogColors = lightColorScheme(
-    primary = Color(0xFF2499E8),
+    primary = Color(0xFF2F6A4B),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD8EEFD),
-    onPrimaryContainer = Color(0xFF0D3048),
-    secondary = Color(0xFF5B7083),
+    primaryContainer = Color(0xFFDFEAD9),
+    onPrimaryContainer = Color(0xFF14110C),
+    secondary = Color(0xFF6B6558),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFDDE8F1),
-    onSecondaryContainer = Color(0xFF1C2B37),
-    background = Color(0xFFF0F5F9),
-    onBackground = Color(0xFF13202B),
+    secondaryContainer = Color(0xFFF0EBDE),
+    onSecondaryContainer = Color(0xFF14110C),
+    tertiary = Color(0xFF9A7527),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFF0EBDE),
+    onTertiaryContainer = Color(0xFF14110C),
+    background = Color(0xFFF5F3EF),
+    onBackground = Color(0xFF14110C),
     surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF16232E),
-    surfaceVariant = Color(0xFFE5EDF3),
-    onSurfaceVariant = Color(0xFF5C6D7C),
-    outline = Color(0xFFC6D3DE),
+    onSurface = Color(0xFF14110C),
+    surfaceVariant = Color(0xFFECE9E2),
+    onSurfaceVariant = Color(0xFF6B6558),
+    outline = Color(0xFFD9D4C8),
+    outlineVariant = Color(0xFFE8E4DA),
+    error = Color(0xFFA4432A),
+    onError = Color.White,
+    errorContainer = Color(0xFFF4DDD5),
+    onErrorContainer = Color(0xFF14110C),
 )
 
 private val DarkKalogColors = darkColorScheme(
-    primary = Color(0xFF71C7FF),
-    onPrimary = Color(0xFF00344F),
-    primaryContainer = Color(0xFF005074),
-    onPrimaryContainer = Color(0xFFC7E7FF),
-    secondary = Color(0xFFB8C8D8),
-    onSecondary = Color(0xFF243140),
-    secondaryContainer = Color(0xFF3A4756),
-    onSecondaryContainer = Color(0xFFD6E4F2),
-    background = Color(0xFF101418),
-    onBackground = Color(0xFFE6EEF6),
-    surface = Color(0xFF171C21),
-    onSurface = Color(0xFFE7EDF4),
-    surfaceVariant = Color(0xFF29323B),
-    onSurfaceVariant = Color(0xFFC2CEDA),
-    outline = Color(0xFF546371),
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF690005),
-    errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
+    primary = Color(0xFF7CBD96),
+    onPrimary = Color(0xFF0C0C0A),
+    primaryContainer = Color(0xFF1E2A23),
+    onPrimaryContainer = Color(0xFFECE9E0),
+    secondary = Color(0xFF8B867A),
+    onSecondary = Color(0xFF0C0C0A),
+    secondaryContainer = Color(0xFF222018),
+    onSecondaryContainer = Color(0xFFECE9E0),
+    tertiary = Color(0xFFD4A85A),
+    onTertiary = Color(0xFF0C0C0A),
+    tertiaryContainer = Color(0xFF222018),
+    onTertiaryContainer = Color(0xFFECE9E0),
+    background = Color(0xFF12120F),
+    onBackground = Color(0xFFECE9E0),
+    surface = Color(0xFF1A1A15),
+    onSurface = Color(0xFFECE9E0),
+    surfaceVariant = Color(0xFF0C0C0A),
+    onSurfaceVariant = Color(0xFF8B867A),
+    outline = Color(0xFF2B2A24),
+    outlineVariant = Color(0xFF24241E),
+    error = Color(0xFFD07A5F),
+    onError = Color(0xFF0C0C0A),
+    errorContainer = Color(0xFF3A1F18),
+    onErrorContainer = Color(0xFFECE9E0),
+)
+
+private val KalogShapes = Shapes(
+    small = RoundedCornerShape(6.dp),
+    medium = RoundedCornerShape(10.dp),
+    large = RoundedCornerShape(14.dp),
+    extraLarge = RoundedCornerShape(20.dp),
+)
+
+private val KalogTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontSize = 48.sp,
+        lineHeight = 52.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    displayMedium = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontSize = 40.sp,
+        lineHeight = 44.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    headlineMedium = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontSize = 22.sp,
+        lineHeight = 27.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontSize = 20.sp,
+        lineHeight = 25.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    titleLarge = TextStyle(
+        fontSize = 15.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    titleMedium = TextStyle(
+        fontSize = 14.sp,
+        lineHeight = 19.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    titleSmall = TextStyle(
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    bodyLarge = TextStyle(
+        fontSize = 15.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.sp,
+    ),
+    bodySmall = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.sp,
+    ),
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.sp,
+    ),
 )
 
 @Composable
@@ -55,7 +165,8 @@ fun KalogTheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkKalogColors else LightKalogColors,
-        typography = Typography(),
+        typography = KalogTypography,
+        shapes = KalogShapes,
         content = content,
     )
 }

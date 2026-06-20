@@ -18,7 +18,9 @@ import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ClearCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ClearOldCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import org.debs.kalog.feature.chat.presentation.text.uiText
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 import org.debs.kalog.feature.chat.presentation.platform.DesktopAutostartManager
 
 class SettingsViewModel(
@@ -263,10 +265,7 @@ class SettingsViewModel(
                 _state.update {
                     it.copy(
                         isClearingMediaCache = false,
-                        mediaCacheMessage = chatLocalized(
-                            en = "Cleared cached files: $clearedCount.",
-                            ru = "Очищено файлов в кэше: $clearedCount.",
-                        ),
+                        mediaCacheMessage = uiText(Res.string.cleared_cached_files, clearedCount),
                     )
                 }
             } catch (error: CancellationException) {
@@ -275,10 +274,7 @@ class SettingsViewModel(
                 _state.update {
                     it.copy(
                         isClearingMediaCache = false,
-                        mediaCacheMessage = chatLocalized(
-                            en = "Could not clear media cache.",
-                            ru = "Не удалось очистить кэш медиа.",
-                        ),
+                        mediaCacheMessage = uiText(Res.string.could_not_clear_media_cache),
                     )
                 }
             }
@@ -299,9 +295,10 @@ class SettingsViewModel(
                     it.copy(
                         isClearingMediaCache = false,
                         mediaCacheRetentionDays = retentionDays.toString(),
-                        mediaCacheMessage = chatLocalized(
-                            en = "Cleared files older than $retentionDays days: $clearedCount.",
-                            ru = "Очищено файлов старше $retentionDays дн.: $clearedCount.",
+                        mediaCacheMessage = uiText(
+                            Res.string.cleared_files_older_than_days,
+                            retentionDays,
+                            clearedCount,
                         ),
                     )
                 }
@@ -311,10 +308,7 @@ class SettingsViewModel(
                 _state.update {
                     it.copy(
                         isClearingMediaCache = false,
-                        mediaCacheMessage = chatLocalized(
-                            en = "Could not clear old media.",
-                            ru = "Не удалось очистить старые медиа.",
-                        ),
+                        mediaCacheMessage = uiText(Res.string.could_not_clear_old_media),
                     )
                 }
             }
@@ -326,10 +320,7 @@ class SettingsViewModel(
         if (!current.canExportAccountBackup) {
             _state.update {
                 it.copy(
-                    accountBackupError = chatLocalized(
-                        en = "Enter matching passwords at least 8 characters long.",
-                        ru = "Введите совпадающие пароли длиной не меньше 8 символов.",
-                    ),
+                    accountBackupError = uiText(Res.string.backup_passwords_must_match),
                 )
             }
             return
@@ -345,20 +336,16 @@ class SettingsViewModel(
             try {
                 val result = accountBackupManager.exportAccount(current.backupPassword)
                 accountBackupManager.shareBackup(result.file)
-                val warning = if (result.deviceBoundPrivateKeyCount > 0) {
-                    " ${deviceBoundBackupWarning()}"
-                } else {
-                    ""
-                }
                 _state.update {
                     it.copy(
                         isExportingAccountBackup = false,
                         backupPassword = "",
                         backupPasswordConfirmation = "",
-                        accountBackupMessage = chatLocalized(
-                            en = "Backup created.${warning}",
-                            ru = "Резервная копия создана.${warning}",
-                        ),
+                        accountBackupMessage = if (result.deviceBoundPrivateKeyCount > 0) {
+                            uiText(Res.string.account_backup_created_with_device_bound_warning)
+                        } else {
+                            uiText(Res.string.account_backup_created)
+                        },
                     )
                 }
             } catch (error: CancellationException) {
@@ -367,17 +354,14 @@ class SettingsViewModel(
                 _state.update {
                     it.copy(
                         isExportingAccountBackup = false,
-                        accountBackupError = e.message ?: e.toString(),
+                        accountBackupError = uiText(Res.string.could_not_create_account_backup),
                     )
                 }
             } catch (_: Throwable) {
                 _state.update {
                     it.copy(
                         isExportingAccountBackup = false,
-                        accountBackupError = chatLocalized(
-                            en = "Could not create account backup.",
-                            ru = "Не удалось создать резервную копию аккаунта.",
-                        ),
+                        accountBackupError = uiText(Res.string.could_not_create_account_backup),
                     )
                 }
             }
@@ -392,20 +376,14 @@ class SettingsViewModel(
                 _state.update {
                     it.copy(
                         accountBackupMessage = if (shared) {
-                            chatLocalized(
-                                en = "Backup file is ready to send.",
-                                ru = "Файл резервной копии готов к отправке.",
-                            )
+                            uiText(Res.string.backup_file_ready_to_send)
                         } else {
                             null
                         },
                         accountBackupError = if (shared) {
                             null
                         } else {
-                            chatLocalized(
-                                en = "Create a fresh backup before sending.",
-                                ru = "Создайте свежую копию перед отправкой.",
-                            )
+                            uiText(Res.string.create_fresh_backup_before_sending)
                         },
                     )
                 }
@@ -414,10 +392,7 @@ class SettingsViewModel(
             } catch (_: Throwable) {
                 _state.update {
                     it.copy(
-                        accountBackupError = chatLocalized(
-                            en = "Could not open the backup file.",
-                            ru = "Не удалось открыть файл резервной копии.",
-                        ),
+                        accountBackupError = uiText(Res.string.could_not_open_backup_file),
                     )
                 }
             }
@@ -442,21 +417,13 @@ class SettingsViewModel(
                     _state.update {
                         it.copy(
                             isImportingAccountBackup = false,
-                            accountBackupMessage = chatLocalized(
-                                en = "Import cancelled.",
-                                ru = "Импорт отменён.",
-                            ),
+                            accountBackupMessage = uiText(Res.string.import_cancelled),
                         )
                     }
                     return@launch
                 }
                 chatPreferencesDataSource.setAccountOnboardingCompleted(true)
                 val importedNickname = chatPreferencesDataSource.getNickname()
-                val warning = if (result.deviceBoundPrivateKeyCount > 0) {
-                    " ${deviceBoundBackupWarning()}"
-                } else {
-                    ""
-                }
                 _state.update {
                     it.copy(
                         currentUserId = result.userId,
@@ -464,10 +431,11 @@ class SettingsViewModel(
                         savedNickname = importedNickname,
                         isImportingAccountBackup = false,
                         importBackupPassword = "",
-                        accountBackupMessage = chatLocalized(
-                            en = "Imported account ${result.userId}.${warning}",
-                            ru = "Импортирован аккаунт ${result.userId}.${warning}",
-                        ),
+                        accountBackupMessage = if (result.deviceBoundPrivateKeyCount > 0) {
+                            uiText(Res.string.imported_account_with_device_bound_warning, result.userId)
+                        } else {
+                            uiText(Res.string.imported_account, result.userId)
+                        },
                     )
                 }
                 _effect.emit(SettingsEffect.AccountImported)
@@ -487,15 +455,7 @@ class SettingsViewModel(
     private companion object {
         private const val DAY_MILLIS = 24L * 60L * 60L * 1000L
 
-        private fun importBackupFailedMessage(): String = chatLocalized(
-            en = "Could not import this backup. Create a new backup on the source device or create a new account.",
-            ru = "Не удалось импортировать эту резервную копию. Создайте новую копию на исходном устройстве или создайте новый аккаунт.",
-        )
-
-        private fun deviceBoundBackupWarning(): String = chatLocalized(
-            en = "Some desktop keys are device-bound and can only be used where those system keys still exist.",
-            ru = "Некоторые ключи настольной версии привязаны к устройству и могут использоваться только там, где эти системные ключи ещё существуют.",
-        )
+        private fun importBackupFailedMessage() = uiText(Res.string.could_not_import_backup)
     }
 }
 

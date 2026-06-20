@@ -1,5 +1,6 @@
 package org.debs.kalog.feature.chat.presentation.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
@@ -152,13 +153,17 @@ import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
 import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
+import org.debs.kalog.feature.chat.domain.model.ChatType
 import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
 import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.math.sqrt
 import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
+import org.debs.kalog.feature.chat.presentation.components.SavedMessagesAvatar
 
 @Composable
 internal fun MessageList(
@@ -227,9 +232,8 @@ internal fun MessageList(
                     .clip(CircleShape)
                     .clickable(onClick = onScrollToBottom),
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                shadowElevation = 6.dp,
-                tonalElevation = 2.dp,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
@@ -237,10 +241,7 @@ internal fun MessageList(
                 ) {
                     Icon(
                         imageVector = Icons.Filled.KeyboardArrowDown,
-                        contentDescription = chatLocalized(
-                            en = "Scroll to bottom",
-                            ru = "Прокрутить вниз",
-                        ),
+                        contentDescription = stringResource(Res.string.scroll_to_bottom),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(28.dp),
                     )
@@ -262,16 +263,12 @@ private fun LoadMoreMessagesIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Surface(
-            shape = RoundedCornerShape(50),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-            tonalElevation = 2.dp,
-            shadowElevation = 4.dp,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
             Text(
-                text = chatLocalized(
-                    en = "Loading older messages...",
-                    ru = "Загружаем старые сообщения...",
-                ),
+                text = stringResource(Res.string.loading_older_messages),
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
@@ -289,8 +286,8 @@ internal fun ChatTopBar(
     onChatInfoClick: () -> Unit = {},
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        shadowElevation = 10.dp,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
             modifier = Modifier
@@ -300,19 +297,26 @@ internal fun ChatTopBar(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
+            Surface(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .size(36.dp)
+                    .clip(MaterialTheme.shapes.medium)
                     .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
+                shape = MaterialTheme.shapes.medium,
+                color = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
             Row(
                 modifier = Modifier
@@ -323,10 +327,14 @@ internal fun ChatTopBar(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AvatarBadge(
-                    avatar = state.avatar,
-                    modifier = Modifier.size(46.dp),
-                )
+                if (state.type == ChatType.Self) {
+                    SavedMessagesAvatar(modifier = Modifier.size(46.dp))
+                } else {
+                    AvatarBadge(
+                        avatar = state.avatar,
+                        modifier = Modifier.size(46.dp),
+                    )
+                }
                 Column {
                     Text(
                         text = state.title,
@@ -336,25 +344,28 @@ internal fun ChatTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = state.subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (state.subtitle.isNotBlank()) {
+                        Text(
+                            text = state.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
             if (state.canInviteUsers) {
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .clickable(onClick = onInviteUserClick),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
                     Text(
-                text = chatLocalized(en = "Invite", ru = "Пригласить"),
+                        text = stringResource(Res.string.invite),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
@@ -385,7 +396,7 @@ internal fun ServiceMessageBubble(
                     enabled = message.body.isNotBlank(),
                     onOpen = { isCopyMenuVisible = true },
                 ),
-                shape = RoundedCornerShape(50),
+                shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
             ) {
                 MessageSelectionContainer(isMine = false) {
@@ -434,17 +445,16 @@ internal fun UserMessageBubble(
                 onOpen = { isCopyMenuVisible = true },
             ),
             shape = if (message.isMine) {
-                RoundedCornerShape(topStart = 22.dp, topEnd = 8.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+                RoundedCornerShape(topStart = 14.dp, topEnd = 6.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
             } else {
-                RoundedCornerShape(topStart = 8.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp)
+                RoundedCornerShape(topStart = 6.dp, topEnd = 14.dp, bottomStart = 14.dp, bottomEnd = 14.dp)
             },
             color = if (message.isMine) {
                 MaterialTheme.colorScheme.primary
             } else {
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)
+                MaterialTheme.colorScheme.surface
             },
-            tonalElevation = if (message.isMine) 0.dp else 2.dp,
-            shadowElevation = if (message.isMine) 0.dp else 4.dp,
+            border = if (message.isMine) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
             Column(
                 modifier = Modifier
@@ -573,7 +583,7 @@ private fun MessageCopyDropdownMenu(
         onDismissRequest = onDismiss,
     ) {
         DropdownMenuItem(
-            text = { Text(chatLocalized(en = "Copy text", ru = "Копировать текст")) },
+            text = { Text(stringResource(Res.string.copy_text)) },
             onClick = {
                 onCopy()
                 onDismiss()
@@ -785,11 +795,8 @@ private fun MediaGridCell(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                    imageVector = Icons.Outlined.PlayArrow,
-                    contentDescription = chatLocalized(
-                        en = "Play video",
-                        ru = "Воспроизвести видео",
-                    ),
+                            imageVector = Icons.Outlined.PlayArrow,
+                            contentDescription = stringResource(Res.string.play_video),
                             tint = Color.White,
                             modifier = Modifier.size(24.dp),
                         )
@@ -950,7 +957,7 @@ private fun ImageAttachmentPreview(
             MediaLoadingPlaceholder(
                 attachment = attachment,
                 isMine = isMine,
-        title = chatLocalized(en = "Image", ru = "Изображение"),
+                title = stringResource(Res.string.image),
                 onRequestDownload = { onRequestAttachmentDownload(attachment.id) },
             )
         }
@@ -1285,16 +1292,13 @@ private fun FullScreenImageViewer(
                     FullScreenImageControl(
                         enabled = hasPrevious,
                         icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = chatLocalized(
-                    en = "Previous media",
-                    ru = "Предыдущее медиа",
-                ),
+                        contentDescription = stringResource(Res.string.previous_media),
                         onClick = onPrevious,
                     )
                 }
                 FullScreenImageControl(
                     icon = Icons.Outlined.Remove,
-            contentDescription = chatLocalized(en = "Zoom out", ru = "Уменьшить"),
+                    contentDescription = stringResource(Res.string.zoom_out),
                     onClick = {
                         scale = (scale - 0.5f).coerceAtLeast(1f)
                         if (scale <= 1.01f) offset = Offset.Zero
@@ -1308,7 +1312,7 @@ private fun FullScreenImageViewer(
                 )
                 FullScreenImageControl(
                     icon = Icons.Outlined.Add,
-            contentDescription = chatLocalized(en = "Zoom in", ru = "Увеличить"),
+                    contentDescription = stringResource(Res.string.zoom_in),
                     onClick = { scale = (scale + 0.5f).coerceAtMost(5f) },
                 )
                 if (positionLabel.isNotBlank()) {
@@ -1323,10 +1327,7 @@ private fun FullScreenImageViewer(
                     FullScreenImageControl(
                         enabled = hasNext,
                         icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = chatLocalized(
-                    en = "Next media",
-                    ru = "Следующее медиа",
-                ),
+                        contentDescription = stringResource(Res.string.next_media),
                         onClick = onNext,
                     )
                 }
@@ -1442,10 +1443,7 @@ private fun BoxScope.FullScreenMediaHeader(
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Close,
-            contentDescription = chatLocalized(
-                en = "Close media",
-                ru = "Закрыть медиа",
-            ),
+                    contentDescription = stringResource(Res.string.close_media),
                     tint = Color.White,
                     modifier = Modifier.size(24.dp),
                 )
@@ -1496,10 +1494,7 @@ private fun BoxScope.FullScreenSideNavigation(
     if (hasPrevious) {
         FullScreenImageControl(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-    contentDescription = chatLocalized(
-        en = "Previous media",
-        ru = "Предыдущее медиа",
-    ),
+            contentDescription = stringResource(Res.string.previous_media),
             onClick = onPrevious,
             modifier = Modifier
                 .align(Alignment.CenterStart)
@@ -1509,10 +1504,7 @@ private fun BoxScope.FullScreenSideNavigation(
     if (hasNext) {
         FullScreenImageControl(
             icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-    contentDescription = chatLocalized(
-        en = "Next media",
-        ru = "Следующее медиа",
-    ),
+            contentDescription = stringResource(Res.string.next_media),
             onClick = onNext,
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -1563,10 +1555,7 @@ private fun RowScope.FullScreenGalleryNavigation(
     FullScreenImageControl(
         enabled = hasPrevious,
         icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-    contentDescription = chatLocalized(
-        en = "Previous media",
-        ru = "Предыдущее медиа",
-    ),
+        contentDescription = stringResource(Res.string.previous_media),
         onClick = onPrevious,
     )
     Text(
@@ -1578,10 +1567,7 @@ private fun RowScope.FullScreenGalleryNavigation(
     FullScreenImageControl(
         enabled = hasNext,
         icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-    contentDescription = chatLocalized(
-        en = "Next media",
-        ru = "Следующее медиа",
-    ),
+        contentDescription = stringResource(Res.string.next_media),
         onClick = onNext,
     )
 }
@@ -1702,7 +1688,7 @@ private fun VideoAttachmentPreview(
                     }
                 },
             shape = RoundedCornerShape(14.dp),
-            color = Color(0xFF111827),
+            color = Color(0xFF1B1A17),
         ) {
             Box(
                 modifier = Modifier
@@ -1720,7 +1706,7 @@ private fun VideoAttachmentPreview(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF1F2937)),
+                            .background(Color(0xFF2A2924)),
                     ) {
                         MediaLoadingPlaceholderContent(attachment.loadState)
                     }
@@ -1739,10 +1725,7 @@ private fun VideoAttachmentPreview(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.PlayArrow,
-                        contentDescription = chatLocalized(
-                            en = "Play video",
-                            ru = "Воспроизвести видео",
-                        ),
+                                contentDescription = stringResource(Res.string.play_video),
                                 tint = Color.White,
                                 modifier = Modifier.size(32.dp),
                             )
@@ -1838,15 +1821,9 @@ private fun VoiceAttachmentPreview(
                             Icons.Outlined.PlayArrow
                         },
                         contentDescription = if (isPlaying) {
-                            chatLocalized(
-                                en = "Stop voice message",
-                                ru = "Остановить голосовое сообщение",
-                            )
+                            stringResource(Res.string.stop_voice_message)
                         } else {
-                            chatLocalized(
-                                en = "Play voice message",
-                                ru = "Воспроизвести голосовое сообщение",
-                            )
+                            stringResource(Res.string.play_voice_message)
                         },
                         tint = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp),
@@ -1861,9 +1838,9 @@ private fun VoiceAttachmentPreview(
                     text = if (attachment.localUri == null) {
                         attachment.loadState.statusText()
                     } else if (isPlaying) {
-                        chatLocalized(en = "Playing voice", ru = "Голосовое воспроизводится")
+                        stringResource(Res.string.playing_voice)
                     } else {
-                        chatLocalized(en = "Voice message", ru = "Голосовое сообщение")
+                        stringResource(Res.string.voice_message)
                     },
                     style = MaterialTheme.typography.labelLarge,
                     color = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
@@ -1959,9 +1936,9 @@ private fun AudioAttachmentPreview(
                             Icons.Outlined.PlayArrow
                         },
                         contentDescription = if (isPlaying) {
-                            chatLocalized(en = "Stop audio", ru = "Остановить аудио")
+                            stringResource(Res.string.stop_audio)
                         } else {
-                            chatLocalized(en = "Play audio", ru = "Воспроизвести аудио")
+                            stringResource(Res.string.play_audio)
                         },
                         tint = if (isMine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp),
@@ -2225,16 +2202,13 @@ private fun MediaLoadingPlaceholderContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF1F2937)),
+            .background(Color(0xFF2A2924)),
         contentAlignment = Alignment.Center,
     ) {
         if (loadState.canRequestDownload()) {
             Icon(
                 imageVector = Icons.Outlined.FileDownload,
-        contentDescription = chatLocalized(
-            en = "Download attachment",
-            ru = "Скачать вложение",
-        ),
+                contentDescription = stringResource(Res.string.download_attachment),
                 tint = Color.White,
                 modifier = Modifier.size(30.dp),
             )
@@ -2257,10 +2231,7 @@ private fun AttachmentLoadStateIcon(
     if (loadState.canRequestDownload()) {
         Icon(
             imageVector = Icons.Outlined.FileDownload,
-    contentDescription = chatLocalized(
-        en = "Download attachment",
-        ru = "Скачать вложение",
-    ),
+            contentDescription = stringResource(Res.string.download_attachment),
             tint = tint,
             modifier = Modifier.size(24.dp),
         )
@@ -2281,8 +2252,8 @@ internal fun InvitationBanner(
 ) {
     Surface(
         modifier = Modifier.imePadding(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        shadowElevation = 12.dp,
+        color = MaterialTheme.colorScheme.background,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
             modifier = Modifier
@@ -2293,10 +2264,7 @@ internal fun InvitationBanner(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-        text = chatLocalized(
-            en = "You were invited to this chat.\nAccept to start messaging.",
-            ru = "Вас пригласили в этот чат.\nПодтвердите, чтобы начать переписку.",
-        ),
+                text = stringResource(Res.string.invitation_banner),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -2308,13 +2276,14 @@ internal fun InvitationBanner(
                 Surface(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(24.dp))
+                        .clip(CircleShape)
                         .clickable(enabled = !isProcessing, onClick = onDecline),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = CircleShape,
                     color = MaterialTheme.colorScheme.errorContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
                     Text(
-                text = chatLocalized(en = "Decline", ru = "Отклонить"),
+                        text = stringResource(Res.string.decline),
                         modifier = Modifier
                             .padding(vertical = 14.dp)
                             .fillMaxWidth(),
@@ -2327,17 +2296,17 @@ internal fun InvitationBanner(
                 Surface(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(24.dp))
+                        .clip(CircleShape)
                         .clickable(enabled = !isProcessing, onClick = onAccept),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = CircleShape,
                     color = MaterialTheme.colorScheme.primary,
                 ) {
                     Text(
-                text = if (isProcessing) {
-                    chatLocalized(en = "Processing...", ru = "Обработка...")
-                } else {
-                    chatLocalized(en = "Accept", ru = "Принять")
-                },
+                        text = if (isProcessing) {
+                            stringResource(Res.string.processing)
+                        } else {
+                            stringResource(Res.string.accept)
+                        },
                         modifier = Modifier
                             .padding(vertical = 14.dp)
                             .fillMaxWidth(),
@@ -2358,6 +2327,7 @@ internal fun MessageComposer(
     pendingAttachments: List<PreparedChatAttachment>,
     attachmentUploadProgress: AttachmentUploadProgress?,
     isPreparingAttachment: Boolean,
+    isSendingMessage: Boolean,
     canSend: Boolean,
     onDraftChanged: (String) -> Unit,
     onSendClick: () -> Unit,
@@ -2375,9 +2345,9 @@ internal fun MessageComposer(
     val shouldRecordVoice = draft.isBlank() && pendingAttachments.isEmpty()
     val shouldUseVoiceAction = isRecordingVoice || shouldRecordVoice
     val isPrimaryEnabled = if (shouldUseVoiceAction) {
-        !isPreparingAttachment
+        !isPreparingAttachment && !isSendingMessage
     } else {
-        canSend && !isPreparingAttachment
+        canSend && !isPreparingAttachment && !isSendingMessage
     }
 
     LaunchedEffect(Unit) {
@@ -2386,8 +2356,8 @@ internal fun MessageComposer(
 
     Surface(
         modifier = Modifier.imePadding(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        shadowElevation = 12.dp,
+        color = MaterialTheme.colorScheme.background,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
             modifier = Modifier
@@ -2416,7 +2386,7 @@ internal fun MessageComposer(
                 Box {
                     AttachmentActionButton(
                         icon = Icons.Outlined.AttachFile,
-                        contentDescription = chatLocalized(en = "Attach", ru = "Прикрепить"),
+                        contentDescription = stringResource(Res.string.attach),
                         enabled = !isPreparingAttachment,
                         onClick = { isAttachmentMenuVisible = true },
                     )
@@ -2425,7 +2395,7 @@ internal fun MessageComposer(
                         onDismissRequest = { isAttachmentMenuVisible = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text(chatLocalized(en = "File", ru = "Файл")) },
+                            text = { Text(stringResource(Res.string.file)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Outlined.AttachFile,
@@ -2438,7 +2408,7 @@ internal fun MessageComposer(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text(chatLocalized(en = "Photo / video", ru = "Фото / видео")) },
+                            text = { Text(stringResource(Res.string.photo_video)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Outlined.PhotoLibrary,
@@ -2451,7 +2421,7 @@ internal fun MessageComposer(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text(chatLocalized(en = "Camera", ru = "Камера")) },
+                            text = { Text(stringResource(Res.string.camera)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Outlined.PhotoCamera,
@@ -2464,7 +2434,7 @@ internal fun MessageComposer(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text(chatLocalized(en = "Paste", ru = "Вставить")) },
+                            text = { Text(stringResource(Res.string.paste)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Outlined.ContentPaste,
@@ -2480,8 +2450,9 @@ internal fun MessageComposer(
                 }
                 Surface(
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
                     val scrollState = rememberScrollState()
                     BasicTextField(
@@ -2505,15 +2476,15 @@ internal fun MessageComposer(
                             }
                             .onPreviewKeyEvent { event ->
                                 if (hasSoftwareKeyboard) return@onPreviewKeyEvent false
-                                if (event.key == Key.Enter && event.type == KeyEventType.KeyDown) {
-                                    if (event.isCtrlPressed) {
-                                        onDraftChanged(draft + "\n")
-                                        true
-                                    } else {
-                                        if (canSend) {
-                                            onSendClick()
-                                            focusRequester.requestFocus()
-                                        }
+                        if (event.key == Key.Enter && event.type == KeyEventType.KeyDown) {
+                            if (event.isCtrlPressed) {
+                                onDraftChanged(draft + "\n")
+                                true
+                            } else {
+                                if (canSend && !isSendingMessage) {
+                                    onSendClick()
+                                    focusRequester.requestFocus()
+                                }
                                         true
                                     }
                                 } else {
@@ -2527,10 +2498,7 @@ internal fun MessageComposer(
                         decorationBox = { innerTextField ->
                             if (draft.isBlank()) {
                                 Text(
-                                    text = chatLocalized(
-                                        en = "Write a message",
-                                        ru = "Напишите сообщение",
-                                    ),
+                                    text = stringResource(Res.string.write_message),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -2564,20 +2532,28 @@ internal fun MessageComposer(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            imageVector = when {
-                                isRecordingVoice -> Icons.Outlined.Stop
-                                shouldRecordVoice -> Icons.Outlined.Mic
-                                else -> Icons.Outlined.Send
-                            },
-                            contentDescription = when {
-                                isRecordingVoice -> chatLocalized(en = "Stop recording", ru = "Остановить запись")
-                                shouldRecordVoice -> chatLocalized(en = "Record voice", ru = "Записать голос")
-                                else -> chatLocalized(en = "Send message", ru = "Отправить сообщение")
-                            },
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(22.dp),
-                        )
+                        if (isSendingMessage && !shouldUseVoiceAction) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        } else {
+                            Icon(
+                                imageVector = when {
+                                    isRecordingVoice -> Icons.Outlined.Stop
+                                    shouldRecordVoice -> Icons.Outlined.Mic
+                                    else -> Icons.Outlined.Send
+                                },
+                                contentDescription = when {
+                                    isRecordingVoice -> stringResource(Res.string.stop_recording)
+                                    shouldRecordVoice -> stringResource(Res.string.record_voice)
+                                    else -> stringResource(Res.string.send_message)
+                                },
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -2599,8 +2575,9 @@ private fun AttachmentUploadProgressBanner(
     val percent = (fraction * 100f).toInt().coerceIn(0, 100)
 
     Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -2612,12 +2589,9 @@ private fun AttachmentUploadProgressBanner(
             ) {
                 Text(
                     text = if (progress == null) {
-                        chatLocalized(en = "Preparing attachment...", ru = "Подготовка вложения...")
+                        stringResource(Res.string.preparing_attachment)
                     } else {
-                        chatLocalized(
-                            en = "Uploading ${progress.fileName}",
-                            ru = "Загрузка ${progress.fileName}",
-                        )
+                        stringResource(Res.string.uploading_file, progress.fileName)
                     },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
@@ -2655,8 +2629,9 @@ private fun AttachmentUploadProgressBanner(
 @Composable
 private fun RecordingVoiceBanner() {
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.errorContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(
             modifier = Modifier
@@ -2672,10 +2647,7 @@ private fun RecordingVoiceBanner() {
                     .background(MaterialTheme.colorScheme.error),
             )
             Text(
-                text = chatLocalized(
-                    en = "Recording... press stop to attach",
-                    ru = "Идёт запись... нажмите стоп, чтобы прикрепить",
-                ),
+                text = stringResource(Res.string.recording_voice_banner),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 fontWeight = FontWeight.SemiBold,
@@ -2696,10 +2668,11 @@ private fun AttachmentActionButton(
     Surface(
         modifier = Modifier
             .size(48.dp)
-            .clip(CircleShape)
+            .clip(MaterialTheme.shapes.medium)
             .clickable(enabled = enabled, onClick = onClick),
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 0.12f else 0.06f),
+        shape = MaterialTheme.shapes.medium,
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -2727,8 +2700,9 @@ private fun PendingAttachmentDrafts(
             val attachment = prepared.attachment
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -2751,10 +2725,7 @@ private fun PendingAttachmentDrafts(
                     )
                     Icon(
                         imageVector = Icons.Outlined.Close,
-                        contentDescription = chatLocalized(
-                            en = "Remove attachment",
-                            ru = "Удалить вложение",
-                        ),
+                        contentDescription = stringResource(Res.string.remove_attachment),
                         modifier = Modifier
                             .size(22.dp)
                             .clip(CircleShape)
@@ -2767,13 +2738,14 @@ private fun PendingAttachmentDrafts(
     }
 }
 
+@Composable
 private fun ChatAttachmentKind.label(): String {
     return when (this) {
-        ChatAttachmentKind.File -> chatLocalized(en = "FILE", ru = "ФАЙЛ")
-        ChatAttachmentKind.Image -> chatLocalized(en = "PHOTO", ru = "ФОТО")
-        ChatAttachmentKind.Video -> chatLocalized(en = "VIDEO", ru = "ВИДЕО")
-        ChatAttachmentKind.Audio -> chatLocalized(en = "AUDIO", ru = "АУДИО")
-        ChatAttachmentKind.Voice -> chatLocalized(en = "VOICE", ru = "ГОЛОС")
+        ChatAttachmentKind.File -> stringResource(Res.string.attachment_kind_file_short)
+        ChatAttachmentKind.Image -> stringResource(Res.string.attachment_kind_image_short)
+        ChatAttachmentKind.Video -> stringResource(Res.string.attachment_kind_video_short)
+        ChatAttachmentKind.Audio -> stringResource(Res.string.attachment_kind_audio_short)
+        ChatAttachmentKind.Voice -> stringResource(Res.string.attachment_kind_voice_short)
     }
 }
 
@@ -3134,7 +3106,10 @@ internal data class FullScreenMediaGallery(
         get() = items.getOrNull(selectedIndex)
 }
 
-internal fun ChatMessage.User.toFullScreenMediaGallery(attachment: ChatAttachment): FullScreenMediaGallery {
+internal fun ChatMessage.User.toFullScreenMediaGallery(
+    attachment: ChatAttachment,
+    currentUserDisplayName: String,
+): FullScreenMediaGallery {
     val mediaAttachments = attachments.filter { item -> item.isGridMedia() }
     val selectedIndex = mediaAttachments.indexOfFirst { item -> item.id == attachment.id }
         .takeIf { index -> index >= 0 }
@@ -3143,9 +3118,9 @@ internal fun ChatMessage.User.toFullScreenMediaGallery(attachment: ChatAttachmen
         items = mediaAttachments.map { mediaAttachment ->
             FullScreenMedia(
                 attachment = mediaAttachment,
-                sender = if (isMine) chatLocalized(en = "You", ru = "Вы") else sender,
+                sender = if (isMine) currentUserDisplayName else sender,
                 timestamp = timestamp,
-                description = body.ifBlank { mediaAttachment.displayName() },
+                description = body.ifBlank { mediaAttachment.name },
             )
         },
         selectedIndex = selectedIndex,
@@ -3187,14 +3162,16 @@ private fun Long.toVoiceTimestamp(): String {
     return "$minutes:${seconds.toString().padStart(2, '0')}"
 }
 
+@Composable
 private fun ChatAttachment.displayName(): String {
     return when {
-        durationMillis != null -> "$name (${durationMillis / 1000}${chatLocalized(en = "s", ru = " с")})"
+        durationMillis != null -> "$name (${durationMillis / 1000}${stringResource(Res.string.duration_seconds_suffix)})"
         sizeBytes != null -> "$name (${sizeBytes.toReadableBytes()})"
         else -> name
     }
 }
 
+@Composable
 private fun ChatAttachment.displayNameWithLoadState(): String {
     return if (localUri == null && loadState != ChatAttachmentLoadState.Ready) {
         "${displayName()} - ${loadState.detailText()}"
@@ -3209,56 +3186,54 @@ private fun ChatAttachmentLoadState.canRequestDownload(): Boolean {
         this == ChatAttachmentLoadState.Failed
 }
 
+@Composable
 private fun ChatAttachmentLoadState.shortLabel(): String {
     return when (this) {
         ChatAttachmentLoadState.NotStarted,
-        ChatAttachmentLoadState.WaitingForTap -> chatLocalized(en = "DL", ru = "СКАЧ")
-        ChatAttachmentLoadState.CheckingCache -> chatLocalized(en = "CACHE", ru = "КЭШ")
-        ChatAttachmentLoadState.Downloading -> chatLocalized(en = "LOAD", ru = "ЗАГР")
-        ChatAttachmentLoadState.Downloaded -> chatLocalized(en = "DONE", ru = "ГОТОВ")
-        ChatAttachmentLoadState.Decrypting -> chatLocalized(en = "DECR", ru = "РАСШ")
-        ChatAttachmentLoadState.Ready -> chatLocalized(en = "FILE", ru = "ФАЙЛ")
-        ChatAttachmentLoadState.Failed -> chatLocalized(en = "ERR", ru = "ОШИБ")
+        ChatAttachmentLoadState.WaitingForTap -> stringResource(Res.string.attachment_load_short_download)
+        ChatAttachmentLoadState.CheckingCache -> stringResource(Res.string.attachment_load_short_cache)
+        ChatAttachmentLoadState.Downloading -> stringResource(Res.string.attachment_load_short_loading)
+        ChatAttachmentLoadState.Downloaded -> stringResource(Res.string.attachment_load_short_done)
+        ChatAttachmentLoadState.Decrypting -> stringResource(Res.string.attachment_load_short_decrypting)
+        ChatAttachmentLoadState.Ready -> stringResource(Res.string.attachment_load_short_file)
+        ChatAttachmentLoadState.Failed -> stringResource(Res.string.attachment_load_short_error)
     }
 }
 
+@Composable
 private fun ChatAttachmentLoadState.statusText(): String {
     return when (this) {
         ChatAttachmentLoadState.NotStarted,
-        ChatAttachmentLoadState.WaitingForTap -> chatLocalized(
-            en = "Tap to download",
-            ru = "Нажмите, чтобы скачать",
-        )
-        ChatAttachmentLoadState.CheckingCache -> chatLocalized(en = "Checking cache", ru = "Проверка кэша")
-        ChatAttachmentLoadState.Downloading -> chatLocalized(en = "Downloading", ru = "Скачивание")
-        ChatAttachmentLoadState.Downloaded -> chatLocalized(en = "Downloaded", ru = "Скачано")
-        ChatAttachmentLoadState.Decrypting -> chatLocalized(
-            en = "Downloaded, decrypting",
-            ru = "Скачано, расшифровка",
-        )
-        ChatAttachmentLoadState.Ready -> chatLocalized(en = "Ready", ru = "Готово")
-        ChatAttachmentLoadState.Failed -> chatLocalized(en = "Download failed", ru = "Ошибка скачивания")
+        ChatAttachmentLoadState.WaitingForTap -> stringResource(Res.string.attachment_status_tap_to_download)
+        ChatAttachmentLoadState.CheckingCache -> stringResource(Res.string.attachment_status_checking_cache)
+        ChatAttachmentLoadState.Downloading -> stringResource(Res.string.attachment_status_downloading)
+        ChatAttachmentLoadState.Downloaded -> stringResource(Res.string.attachment_status_downloaded)
+        ChatAttachmentLoadState.Decrypting -> stringResource(Res.string.attachment_status_downloaded_decrypting)
+        ChatAttachmentLoadState.Ready -> stringResource(Res.string.attachment_status_ready)
+        ChatAttachmentLoadState.Failed -> stringResource(Res.string.attachment_status_download_failed)
     }
 }
 
+@Composable
 private fun ChatAttachmentLoadState.detailText(): String {
     return when (this) {
         ChatAttachmentLoadState.NotStarted,
-        ChatAttachmentLoadState.WaitingForTap -> chatLocalized(en = "waiting for tap", ru = "ожидает нажатия")
-        ChatAttachmentLoadState.CheckingCache -> chatLocalized(en = "checking cache", ru = "проверка кэша")
-        ChatAttachmentLoadState.Downloading -> chatLocalized(en = "downloading", ru = "скачивается")
-        ChatAttachmentLoadState.Downloaded -> chatLocalized(en = "downloaded", ru = "скачано")
-        ChatAttachmentLoadState.Decrypting -> chatLocalized(en = "decrypting", ru = "расшифровывается")
-        ChatAttachmentLoadState.Ready -> chatLocalized(en = "ready", ru = "готово")
-        ChatAttachmentLoadState.Failed -> chatLocalized(en = "error", ru = "ошибка")
+        ChatAttachmentLoadState.WaitingForTap -> stringResource(Res.string.attachment_detail_waiting_for_tap)
+        ChatAttachmentLoadState.CheckingCache -> stringResource(Res.string.attachment_detail_checking_cache)
+        ChatAttachmentLoadState.Downloading -> stringResource(Res.string.attachment_detail_downloading)
+        ChatAttachmentLoadState.Downloaded -> stringResource(Res.string.attachment_detail_downloaded)
+        ChatAttachmentLoadState.Decrypting -> stringResource(Res.string.attachment_detail_decrypting)
+        ChatAttachmentLoadState.Ready -> stringResource(Res.string.attachment_detail_ready)
+        ChatAttachmentLoadState.Failed -> stringResource(Res.string.attachment_detail_error)
     }
 }
 
+@Composable
 private fun Long.toReadableBytes(): String {
-    if (this < 1024L) return "$this ${chatLocalized(en = "B", ru = "Б")}"
+    if (this < 1024L) return "$this ${stringResource(Res.string.bytes_unit_b)}"
     val kib = this / 1024.0
-    if (kib < 1024.0) return "${kib.formatOneDecimal()} ${chatLocalized(en = "KB", ru = "КБ")}"
-    return "${(kib / 1024.0).formatOneDecimal()} ${chatLocalized(en = "MB", ru = "МБ")}"
+    if (kib < 1024.0) return "${kib.formatOneDecimal()} ${stringResource(Res.string.bytes_unit_kb)}"
+    return "${(kib / 1024.0).formatOneDecimal()} ${stringResource(Res.string.bytes_unit_mb)}"
 }
 
 private fun Double.formatOneDecimal(): String {
@@ -3266,11 +3241,12 @@ private fun Double.formatOneDecimal(): String {
     return "${scaled / 10}.${scaled % 10}"
 }
 
+@Composable
 private fun DeliveryStatus.label(): String {
     return when (this) {
-        DeliveryStatus.Sending -> chatLocalized(en = "Sending", ru = "Отправка")
-        DeliveryStatus.Sent -> chatLocalized(en = "Sent", ru = "Отправлено")
-        DeliveryStatus.Read -> chatLocalized(en = "Read", ru = "Прочитано")
+        DeliveryStatus.Sending -> stringResource(Res.string.delivery_sending)
+        DeliveryStatus.Sent -> stringResource(Res.string.delivery_sent)
+        DeliveryStatus.Read -> stringResource(Res.string.delivery_read)
     }
 }
 
@@ -3280,28 +3256,22 @@ private fun MessagePreview() {
     ChatDetailsScreen(
         chatId = "preview",
         state = ChatDetailsUiState(
-            title = chatLocalized(en = "Elena Morozova", ru = "Елена Морозова"),
-            subtitle = chatLocalized(en = "online", ru = "в сети"),
-            avatar = AvatarSpec(chatLocalized(en = "EM", ru = "ЕМ"), AvatarAccent.Rose),
+            title = "Elena Morozova",
+            subtitle = "online",
+            avatar = AvatarSpec("EM", AvatarAccent.Rose),
             messages = listOf(
                 ChatMessage.User(
                     id = "1",
-                    sender = chatLocalized(en = "Elena", ru = "Елена"),
-                    body = chatLocalized(
-                        en = "The changelog draft looks good.",
-                        ru = "Черновик списка изменений выглядит хорошо.",
-                    ),
+                    sender = "Elena",
+                    body = "The changelog draft looks good.",
                     timestamp = "08:28",
                     isMine = false,
                     deliveryStatus = DeliveryStatus.Read,
                 ),
                 ChatMessage.User(
                     id = "2",
-                    sender = chatLocalized(en = "You", ru = "Вы"),
-                    body = chatLocalized(
-                        en = "I will send the final version after review.",
-                        ru = "Отправлю финальную версию после ревью.",
-                    ),
+                    sender = "You",
+                    body = "I will send the final version after review.",
                     timestamp = "08:29",
                     isMine = true,
                     deliveryStatus = DeliveryStatus.Sent,

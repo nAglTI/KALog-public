@@ -67,6 +67,20 @@ interface ChatKeyStore {
         )
     }
 
+    suspend fun selfChatId(): String? = null
+
+    suspend fun saveSelfChatId(chatId: String) = Unit
+
+    suspend fun selfChatPublicKey(): String? = null
+
+    suspend fun selfChatPrivateKeyRef(): PrivateKeyRef? = null
+
+    suspend fun saveSelfChatKeyPair(publicKey: String, privateKeyRef: PrivateKeyRef) = Unit
+
+    suspend fun deviceId(): String? = null
+
+    suspend fun saveDeviceId(deviceId: String) = Unit
+
     suspend fun participantsFor(chatId: String): List<ChatParticipantKey>
 
     suspend fun saveParticipants(chatId: String, participants: List<ChatParticipantKey>)
@@ -94,6 +108,9 @@ data class ChatKeySnapshot(
     val currentUserPublicKey: String,
     val currentUserPrivateKeyRef: String,
     val serverPublicKey: String? = null,
+    val selfChatId: String? = null,
+    val selfChatPublicKey: String? = null,
+    val selfChatPrivateKeyRef: String? = null,
     val chatKeys: List<StoredChatKeyPair> = emptyList(),
     val participantsByChat: List<StoredChatParticipants> = emptyList(),
 )

@@ -104,6 +104,51 @@ class SettingsChatKeyStore(
         }
     }
 
+    override suspend fun selfChatId(): String? = keyValueStorage.getStringOrNull(SELF_CHAT_ID)
+
+    override suspend fun saveSelfChatId(chatId: String) {
+        val normalizedChatId = chatId.trim()
+        if (normalizedChatId.isBlank()) return
+
+        val previousChatId = selfChatId()
+        keyValueStorage.putString(SELF_CHAT_ID, normalizedChatId)
+
+        val publicKey = selfChatPublicKey()
+        val privateKeyRef = selfChatPrivateKeyRef()
+        if (publicKey != null && privateKeyRef != null) {
+            saveChatKeyPair(normalizedChatId, publicKey, privateKeyRef)
+        } else if (previousChatId != normalizedChatId) {
+            touchKeyRevision()
+        }
+    }
+
+    override suspend fun selfChatPublicKey(): String? = keyValueStorage.getStringOrNull(SELF_CHAT_PUBLIC_KEY)
+
+    override suspend fun selfChatPrivateKeyRef(): PrivateKeyRef? {
+        return privateKeyRefOrNull(SELF_CHAT_PRIVATE_KEY)
+    }
+
+    override suspend fun saveSelfChatKeyPair(publicKey: String, privateKeyRef: PrivateKeyRef) {
+        val previousPublicKey = selfChatPublicKey()
+        val previousPrivateKeyRef = selfChatPrivateKeyRef()
+        keyValueStorage.putString(SELF_CHAT_PUBLIC_KEY, publicKey)
+        secureKeyValueStorage.putString(SELF_CHAT_PRIVATE_KEY, privateKeyRef.serialize())
+        selfChatId()?.takeIf(String::isNotBlank)?.let { chatId ->
+            saveChatKeyPair(chatId, publicKey, privateKeyRef)
+        }
+        if (previousPublicKey != publicKey || previousPrivateKeyRef != privateKeyRef) {
+            touchKeyRevision()
+        }
+    }
+
+    override suspend fun deviceId(): String? = keyValueStorage.getStringOrNull(DEVICE_ID)
+
+    override suspend fun saveDeviceId(deviceId: String) {
+        val normalizedDeviceId = deviceId.trim()
+        if (normalizedDeviceId.isBlank()) return
+        keyValueStorage.putString(DEVICE_ID, normalizedDeviceId)
+    }
+
     override suspend fun participantsFor(chatId: String): List<ChatParticipantKey> {
         val serializedValue = keyValueStorage.getStringOrNull(participantsKey(chatId)).orEmpty()
         if (serializedValue.isBlank()) return emptyList()
@@ -152,12 +197,18 @@ class SettingsChatKeyStore(
                 ru = "Приватный ключ текущего пользователя не инициализирован.",
             )
         }
+        val selfChatId = selfChatId()
+        val selfChatPublicKey = selfChatPublicKey() ?: selfChatId?.let { chatPublicKey(it) }
+        val selfChatPrivateKeyRef = selfChatPrivateKeyRef() ?: selfChatId?.let { chatPrivateKeyRef(it) }
         val chatIds = trackedChatIds()
         return ChatKeySnapshot(
             currentUserId = userId,
             currentUserPublicKey = publicKey,
             currentUserPrivateKeyRef = privateKeyRef.serialize(),
             serverPublicKey = serverPublicKey(),
+            selfChatId = selfChatId,
+            selfChatPublicKey = selfChatPublicKey,
+            selfChatPrivateKeyRef = selfChatPrivateKeyRef?.serialize(),
             chatKeys = chatIds.mapNotNull { chatId ->
                 val chatPublicKey = chatPublicKey(chatId) ?: return@mapNotNull null
                 val chatPrivateKeyRef = chatPrivateKeyRef(chatId) ?: return@mapNotNull null
@@ -187,6 +238,16 @@ class SettingsChatKeyStore(
         )
         snapshot.serverPublicKey?.takeIf(String::isNotBlank)?.let { publicKey ->
             saveServerPublicKey(publicKey)
+        }
+        snapshot.selfChatId?.takeIf(String::isNotBlank)?.let { chatId ->
+            saveSelfChatId(chatId)
+        }
+        if (!snapshot.selfChatPublicKey.isNullOrBlank() && !snapshot.selfChatPrivateKeyRef.isNullOrBlank()) {
+            val privateKeyRef = PrivateKeyRef.deserialize(snapshot.selfChatPrivateKeyRef)
+            saveSelfChatKeyPair(snapshot.selfChatPublicKey, privateKeyRef)
+            snapshot.selfChatId?.takeIf(String::isNotBlank)?.let { chatId ->
+                saveChatKeyPair(chatId, snapshot.selfChatPublicKey, privateKeyRef)
+            }
         }
         snapshot.chatKeys.forEach { keyPair ->
             saveChatKeyPair(
@@ -251,6 +312,10 @@ class SettingsChatKeyStore(
         keyValueStorage.remove(CURRENT_USER_PUBLIC_KEY)
         secureKeyValueStorage.remove(CURRENT_USER_PRIVATE_KEY)
         keyValueStorage.remove(SERVER_PUBLIC_KEY)
+        keyValueStorage.remove(SELF_CHAT_ID)
+        keyValueStorage.remove(SELF_CHAT_PUBLIC_KEY)
+        secureKeyValueStorage.remove(SELF_CHAT_PRIVATE_KEY)
+        keyValueStorage.remove(DEVICE_ID)
     }
 
     private suspend fun touchKeyRevision() {
@@ -275,6 +340,10 @@ class SettingsChatKeyStore(
         private const val CURRENT_USER_PUBLIC_KEY = "chat.keys.current_user.public"
         private const val CURRENT_USER_PRIVATE_KEY = "chat.keys.current_user.private"
         private const val SERVER_PUBLIC_KEY = "chat.keys.server.public"
+        private const val SELF_CHAT_ID = "chat.keys.self_chat.id"
+        private const val SELF_CHAT_PUBLIC_KEY = "chat.keys.self_chat.public"
+        private const val SELF_CHAT_PRIVATE_KEY = "chat.keys.self_chat.private"
+        private const val DEVICE_ID = "chat.keys.device.id"
         private const val CHAT_PUBLIC_KEY_PREFIX = "chat.keys.chat.public"
         private const val CHAT_PRIVATE_KEY_PREFIX = "chat.keys.chat.private"
         private const val PARTICIPANTS_PREFIX = "chat.keys.participants"

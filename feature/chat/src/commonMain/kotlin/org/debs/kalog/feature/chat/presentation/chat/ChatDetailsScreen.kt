@@ -1,5 +1,6 @@
 package org.debs.kalog.feature.chat.presentation.chat
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
@@ -35,8 +36,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -144,7 +143,9 @@ import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
 import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.math.sqrt
@@ -181,14 +182,15 @@ fun ChatDetailsScreen(
     val hasLoadMoreItem = state.hasMoreMessages || state.isLoadingMoreMessages
     val coroutineScope = rememberCoroutineScope()
     var fullScreenAttachmentId by rememberSaveable(chatId) { mutableStateOf<String?>(null) }
-    val fullScreenGallery = remember(state.messages, fullScreenAttachmentId) {
+    val currentUserDisplayName = stringResource(Res.string.you)
+    val fullScreenGallery = remember(state.messages, fullScreenAttachmentId, currentUserDisplayName) {
         val attachmentId = fullScreenAttachmentId ?: return@remember null
         state.messages.firstNotNullOfOrNull { message ->
             val userMessage = message as? ChatMessage.User ?: return@firstNotNullOfOrNull null
             val attachment = userMessage.attachments.firstOrNull { it.id == attachmentId }
                 ?: return@firstNotNullOfOrNull null
             if (attachment.isGridMedia()) {
-                userMessage.toFullScreenMediaGallery(attachment)
+                userMessage.toFullScreenMediaGallery(attachment, currentUserDisplayName)
             } else {
                 null
             }
@@ -408,6 +410,7 @@ fun ChatDetailsScreen(
                     pendingAttachments = state.pendingAttachments,
                     attachmentUploadProgress = state.attachmentUploadProgress,
                     isPreparingAttachment = state.isPreparingAttachment,
+                    isSendingMessage = state.isSendingMessage,
                     canSend = state.canSend,
                     onDraftChanged = onDraftChanged,
                     onSendClick = onSendClick,
@@ -450,15 +453,12 @@ fun ChatDetailsScreen(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(24.dp),
-                    shape = RoundedCornerShape(22.dp),
+                    shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.94f),
-                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
                     Text(
-                        text = chatLocalized(
-                            en = "Drop files to attach",
-                            ru = "Перетащите файлы, чтобы прикрепить",
-                        ),
+                        text = stringResource(Res.string.drop_files_to_attach),
                         modifier = Modifier.padding(horizontal = 22.dp, vertical = 16.dp),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onPrimary,

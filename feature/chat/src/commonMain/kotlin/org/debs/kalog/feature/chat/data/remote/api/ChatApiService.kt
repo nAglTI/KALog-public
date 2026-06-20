@@ -122,6 +122,34 @@ class ChatApiService(
         )
     }
 
+    suspend fun createSelfChat(request: CreateSelfChatRequestDto): CreateSelfChatResultDto {
+        val fullUrl = url("/api/v1/chat/self/create")
+        val requestBody = serializeForLog(request)
+        val transportRequest = secureApiClient.prepareEncryptedRequest(requestBody)
+        logRequest(
+            method = "POST",
+            fullUrl = fullUrl,
+            requestBody = requestBody,
+            transportBody = serializeForLog(transportRequest),
+        )
+        val response = executeLoggedRequest(
+            method = "POST",
+            fullUrl = fullUrl,
+            requestBody = requestBody,
+            transportBody = serializeForLog(transportRequest),
+        ) {
+            secureApiClient.httpClient.post(fullUrl) {
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody(transportRequest)
+            }
+        }
+        return if (response.statusCode == 409) {
+            CreateSelfChatResultDto.AlreadyExists
+        } else {
+            CreateSelfChatResultDto.Created(response.decodeEncryptedLoggedBody())
+        }
+    }
+
     suspend fun inviteUserToChat(request: InviteUserToChatRequestDto) {
         postUnit(
             path = "/api/v1/chat/group/invite",

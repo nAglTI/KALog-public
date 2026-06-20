@@ -1,6 +1,8 @@
 package org.debs.kalog.feature.chat.presentation.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,8 +39,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 import org.debs.kalog.feature.chat.data.preferences.AppThemeMode
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import org.debs.kalog.feature.chat.presentation.text.UiText
+import org.debs.kalog.feature.chat.presentation.text.asString
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun SettingsScreen(
@@ -156,22 +161,29 @@ private fun SettingsHeader(onBackClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
+        Surface(
             modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                .size(36.dp)
+                .clip(MaterialTheme.shapes.medium)
                 .clickable(onClick = onBackClick),
-            contentAlignment = Alignment.Center,
+            shape = MaterialTheme.shapes.medium,
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
         Text(
-            text = chatLocalized(en = "Settings", ru = "Настройки"),
+            text = stringResource(Res.string.settings),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground,
@@ -192,10 +204,9 @@ private fun SettingsNicknameSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
             modifier = Modifier
@@ -204,7 +215,7 @@ private fun SettingsNicknameSection(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = chatLocalized(en = "Nickname", ru = "Никнейм"),
+                text = stringResource(Res.string.nickname),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -214,10 +225,10 @@ private fun SettingsNicknameSection(
                 onValueChange = onNicknameChange,
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = {
-                    Text(chatLocalized(en = "Enter nickname", ru = "Введите никнейм"))
+                    Text(stringResource(Res.string.enter_nickname))
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.large,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -226,15 +237,15 @@ private fun SettingsNicknameSection(
             ) {
                 if (isSaved) {
                     Text(
-                        text = chatLocalized(en = "Saved", ru = "Сохранено"),
+                        text = stringResource(Res.string.saved),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF16A34A),
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(end = 12.dp),
                     )
                 }
                 if (isError) {
                     Text(
-                        text = chatLocalized(en = "Could not send", ru = "Не удалось отправить"),
+                        text = stringResource(Res.string.could_not_send),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(end = 12.dp),
@@ -243,9 +254,9 @@ private fun SettingsNicknameSection(
                 Button(
                     onClick = onSaveClick,
                     enabled = isSaveEnabled,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                 ) {
-                    Text(chatLocalized(en = "Save", ru = "Сохранить"))
+                    Text(stringResource(Res.string.save))
                 }
             }
         }
@@ -261,10 +272,9 @@ private fun SettingsUuidSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
             modifier = Modifier
@@ -273,17 +283,14 @@ private fun SettingsUuidSection(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = chatLocalized(en = "Your UUID", ru = "Ваш UUID"),
+                text = stringResource(Res.string.your_uuid),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = if (currentUserId.isBlank()) {
-                    chatLocalized(
-                        en = "UUID is initializing...",
-                        ru = "UUID инициализируется...",
-                    )
+                    stringResource(Res.string.uuid_initializing)
                 } else {
                     currentUserId
                 },
@@ -292,20 +299,21 @@ private fun SettingsUuidSection(
             )
             Surface(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(MaterialTheme.shapes.medium)
                     .clickable(
                         enabled = currentUserId.isNotBlank(),
                         onClick = onCopyClick,
                     ),
-                shape = RoundedCornerShape(18.dp),
+                shape = MaterialTheme.shapes.medium,
                 color = if (currentUserId.isNotBlank()) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    MaterialTheme.colorScheme.primaryContainer
                 } else {
-                    MaterialTheme.colorScheme.surfaceVariant
+                    MaterialTheme.colorScheme.secondaryContainer
                 },
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 Text(
-                    text = chatLocalized(en = "Copy UUID", ru = "Копировать UUID"),
+                    text = stringResource(Res.string.copy_uuid),
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     style = MaterialTheme.typography.labelLarge,
                     color = if (currentUserId.isNotBlank()) {
@@ -332,8 +340,8 @@ private fun SettingsAccountBackupSection(
     isExporting: Boolean,
     isImporting: Boolean,
     deviceBoundKeyCount: Int,
-    message: String?,
-    error: String?,
+    message: UiText?,
+    error: UiText?,
     onBackupPasswordChange: (String) -> Unit,
     onBackupPasswordConfirmationChange: (String) -> Unit,
     onExportClick: () -> Unit,
@@ -345,10 +353,9 @@ private fun SettingsAccountBackupSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
             modifier = Modifier
@@ -357,25 +364,19 @@ private fun SettingsAccountBackupSection(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = chatLocalized(en = "Account backup", ru = "Резервная копия аккаунта"),
+                text = stringResource(Res.string.account_backup),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = chatLocalized(
-                    en = "The backup contains your UUID and saved encryption keys. It is protected with the password below, so keep both the file and the password safe.",
-                    ru = "Резервная копия содержит ваш UUID и сохранённые ключи шифрования. Она защищена паролем ниже, поэтому храните и файл, и пароль в безопасности.",
-                ),
+                text = stringResource(Res.string.account_backup_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (deviceBoundKeyCount > 0) {
                 Text(
-                    text = chatLocalized(
-                        en = "This device has platform-bound keys: $deviceBoundKeyCount. They can only be reused where those system keys still exist.",
-                        ru = "На этом устройстве есть ключи, привязанные к платформе: $deviceBoundKeyCount. Их можно повторно использовать только там, где эти системные ключи ещё существуют.",
-                    ),
+                    text = stringResource(Res.string.device_bound_backup_warning, deviceBoundKeyCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -384,19 +385,19 @@ private fun SettingsAccountBackupSection(
                 value = backupPassword,
                 onValueChange = onBackupPasswordChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(chatLocalized(en = "New backup password", ru = "Новый пароль копии")) },
+                label = { Text(stringResource(Res.string.new_backup_password)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.large,
             )
             OutlinedTextField(
                 value = backupPasswordConfirmation,
                 onValueChange = onBackupPasswordConfirmationChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(chatLocalized(en = "Repeat password", ru = "Повторите пароль")) },
+                label = { Text(stringResource(Res.string.repeat_password)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.large,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -407,13 +408,13 @@ private fun SettingsAccountBackupSection(
                     onClick = onExportClick,
                     enabled = canExport,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                 ) {
                     Text(
                         if (isExporting) {
-                            chatLocalized(en = "Creating...", ru = "Создание...")
+                            stringResource(Res.string.creating)
                         } else {
-                            chatLocalized(en = "Create backup", ru = "Создать копию")
+                            stringResource(Res.string.create_backup)
                         },
                     )
                 }
@@ -421,23 +422,17 @@ private fun SettingsAccountBackupSection(
                     onClick = onShareClick,
                     enabled = canShare,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                 ) {
-                    Text(chatLocalized(en = "Share", ru = "Поделиться"))
+                    Text(stringResource(Res.string.share))
                 }
             }
             if (lastBackupFileName != null) {
                 Text(
                     text = if (isStale) {
-                        chatLocalized(
-                            en = "Last backup is stale: $lastBackupFileName",
-                            ru = "Последняя копия устарела: $lastBackupFileName",
-                        )
+                        stringResource(Res.string.last_backup_stale, lastBackupFileName)
                     } else {
-                        chatLocalized(
-                            en = "Last backup is current: $lastBackupFileName",
-                            ru = "Последняя копия актуальна: $lastBackupFileName",
-                        )
+                        stringResource(Res.string.last_backup_current, lastBackupFileName)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isStale) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -445,16 +440,13 @@ private fun SettingsAccountBackupSection(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = chatLocalized(en = "Import backup", ru = "Импорт копии"),
+                text = stringResource(Res.string.import_backup),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = chatLocalized(
-                    en = "Import replaces local account keys with the encrypted file contents. Use it before creating chats on a new device.",
-                    ru = "Импорт заменит локальные ключи аккаунта содержимым зашифрованного файла. Используйте его перед созданием чатов на новом устройстве.",
-                ),
+                text = stringResource(Res.string.import_backup_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -462,35 +454,35 @@ private fun SettingsAccountBackupSection(
                 value = importPassword,
                 onValueChange = onImportPasswordChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(chatLocalized(en = "Backup password", ru = "Пароль от копии")) },
+                label = { Text(stringResource(Res.string.backup_password)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.large,
             )
             OutlinedButton(
                 onClick = onImportClick,
                 enabled = importPassword.isNotBlank() && !isImporting,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = CircleShape,
             ) {
                 Text(
                     if (isImporting) {
-                        chatLocalized(en = "Importing...", ru = "Импорт...")
+                        stringResource(Res.string.importing)
                     } else {
-                        chatLocalized(en = "Choose backup file", ru = "Выбрать файл копии")
+                        stringResource(Res.string.choose_backup_file)
                     },
                 )
             }
             message?.let {
                 Text(
-                    text = it,
+                    text = it.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             error?.let {
                 Text(
-                    text = it,
+                    text = it.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -508,10 +500,9 @@ private fun SettingsThemeSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
             modifier = Modifier
@@ -520,7 +511,7 @@ private fun SettingsThemeSection(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = chatLocalized(en = "Theme", ru = "Тема"),
+                text = stringResource(Res.string.theme),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -528,8 +519,9 @@ private fun SettingsThemeSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(MaterialTheme.shapes.medium)
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
                     .padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -538,11 +530,11 @@ private fun SettingsThemeSection(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(MaterialTheme.shapes.small)
                             .clickable { onThemeModeChange(mode) },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = MaterialTheme.shapes.small,
                         color = if (selected) {
-                            MaterialTheme.colorScheme.primary
+                            MaterialTheme.colorScheme.surface
                         } else {
                             Color.Transparent
                         },
@@ -552,7 +544,7 @@ private fun SettingsThemeSection(
                             modifier = Modifier.padding(vertical = 10.dp),
                             style = MaterialTheme.typography.labelLarge,
                             color = if (selected) {
-                                MaterialTheme.colorScheme.onPrimary
+                                MaterialTheme.colorScheme.onSurface
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
@@ -578,10 +570,9 @@ private fun SettingsDesktopAutostartSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(
             modifier = Modifier
@@ -595,25 +586,19 @@ private fun SettingsDesktopAutostartSection(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = chatLocalized(en = "Autostart", ru = "Автозапуск"),
+                    text = stringResource(Res.string.autostart),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                    text = chatLocalized(
-                        en = "Start Mayday Chat when signing in",
-                        ru = "Запускать Mayday Chat при входе в систему",
-                    ),
+                    text = stringResource(Res.string.autostart_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (isError) {
                     Text(
-                        text = chatLocalized(
-                            en = "Could not update system autostart.",
-                            ru = "Не удалось обновить системный автозапуск.",
-                        ),
+                        text = stringResource(Res.string.autostart_error),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -636,10 +621,9 @@ private fun SettingsDebugSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(
             modifier = Modifier
@@ -650,16 +634,13 @@ private fun SettingsDebugSection(
         ) {
             Column {
                 Text(
-                    text = chatLocalized(en = "Debug mode", ru = "Режим отладки"),
+                    text = stringResource(Res.string.debug_mode),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
-                    text = chatLocalized(
-                        en = "Show all service messages",
-                        ru = "Показывать все сервисные сообщения",
-                    ),
+                    text = stringResource(Res.string.debug_mode_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -676,7 +657,7 @@ private fun SettingsDebugSection(
 private fun SettingsMediaCacheSection(
     retentionDays: String,
     isClearing: Boolean,
-    message: String?,
+    message: UiText?,
     onRetentionDaysChange: (String) -> Unit,
     onClearAllClick: () -> Unit,
     onClearOldClick: () -> Unit,
@@ -685,10 +666,9 @@ private fun SettingsMediaCacheSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(
             modifier = Modifier
@@ -697,16 +677,13 @@ private fun SettingsMediaCacheSection(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = chatLocalized(en = "Media cache", ru = "Кэш медиа"),
+                text = stringResource(Res.string.media_cache),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = chatLocalized(
-                    en = "Decrypted files are stored locally for quick previews.",
-                    ru = "Расшифрованные файлы хранятся локально для быстрого предпросмотра.",
-                ),
+                text = stringResource(Res.string.media_cache_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -715,10 +692,10 @@ private fun SettingsMediaCacheSection(
                 onValueChange = onRetentionDaysChange,
                 modifier = Modifier.fillMaxWidth(),
                 label = {
-                    Text(chatLocalized(en = "Clear files older than, days", ru = "Очищать файлы старше, дней"))
+                    Text(stringResource(Res.string.clear_files_older_than_days))
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.large,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -729,26 +706,26 @@ private fun SettingsMediaCacheSection(
                     onClick = onClearOldClick,
                     enabled = !isClearing && retentionDays.isNotBlank(),
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                 ) {
-                    Text(chatLocalized(en = "Clear old", ru = "Очистить старые"))
+                    Text(stringResource(Res.string.clear_old))
                 }
                 Button(
                     onClick = onClearAllClick,
                     enabled = !isClearing,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = MaterialTheme.colorScheme.onError,
                     ),
                 ) {
-                    Text(chatLocalized(en = "Clear all", ru = "Очистить всё"))
+                    Text(stringResource(Res.string.clear_all))
                 }
             }
             if (message != null) {
                 Text(
-                    text = message,
+                    text = message.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -757,11 +734,12 @@ private fun SettingsMediaCacheSection(
     }
 }
 
+@Composable
 private fun AppThemeMode.label(): String {
     return when (this) {
-        AppThemeMode.System -> chatLocalized(en = "System", ru = "Системная")
-        AppThemeMode.Light -> chatLocalized(en = "Light", ru = "Светлая")
-        AppThemeMode.Dark -> chatLocalized(en = "Dark", ru = "Тёмная")
+        AppThemeMode.System -> stringResource(Res.string.theme_system)
+        AppThemeMode.Light -> stringResource(Res.string.theme_light)
+        AppThemeMode.Dark -> stringResource(Res.string.theme_dark)
     }
 }
 
@@ -780,14 +758,14 @@ private fun SettingsWipeSection(
             onClick = onClearDataClick,
             enabled = enabled,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
+            shape = CircleShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.error,
                 contentColor = MaterialTheme.colorScheme.onError,
             ),
         ) {
             Text(
-                text = chatLocalized(en = "Wipe app", ru = "Стереть приложение"),
+                text = stringResource(Res.string.wipe_app),
                 modifier = Modifier.padding(vertical = 4.dp),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,

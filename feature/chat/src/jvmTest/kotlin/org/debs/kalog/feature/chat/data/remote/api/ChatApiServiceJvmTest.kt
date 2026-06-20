@@ -8,6 +8,7 @@ import io.ktor.client.request.HttpRequestData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteChannel
@@ -231,6 +232,45 @@ class ChatApiServiceJvmTest {
     }
 
     @Test
+    fun createSelfChat_usesEncryptedBody() = runBlocking {
+        val service = createService(
+            responseBody = """
+                {"id":"self-chat","title":"Saved Messages","type":"self"}
+            """.trimIndent(),
+        ) { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("/api/v1/chat/self/create", request.url.encodedPath)
+            assertTrue(request.url.parameters.isEmpty())
+
+            val requestJson = json.parseToJsonElement(request.encryptedEnvelope().data.single()).jsonObject
+            assertEquals("self-public-key", requestJson.getValue("pk").jsonPrimitive.content)
+            assertEquals(1, requestJson.size)
+        }
+
+        val response = service.createSelfChat(CreateSelfChatRequestDto(publicKey = "self-public-key"))
+
+        assertTrue(response is CreateSelfChatResultDto.Created)
+        assertEquals("self-chat", response.chat.id)
+        assertEquals("self", response.chat.type)
+    }
+
+    @Test
+    fun createSelfChat_returnsAlreadyExistsForConflict() = runBlocking {
+        val service = createService(
+            responseBody = "",
+            encryptResponse = false,
+            status = HttpStatusCode.Conflict,
+        ) { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("/api/v1/chat/self/create", request.url.encodedPath)
+        }
+
+        val response = service.createSelfChat(CreateSelfChatRequestDto(publicKey = "self-public-key"))
+
+        assertEquals(CreateSelfChatResultDto.AlreadyExists, response)
+    }
+
+    @Test
     fun inviteUserToChat_usesEncryptedBody() = runBlocking {
         val service = createService(
             responseBody = "{}",
@@ -384,6 +424,7 @@ class ChatApiServiceJvmTest {
     private fun createService(
         responseBody: String,
         encryptResponse: Boolean = true,
+        status: HttpStatusCode = HttpStatusCode.OK,
         unwrapResponse: suspend (SecurePayload) -> NetworkDecryptionResult = {
             NetworkDecryptionResult.Decrypted(it.chunks.singleOrNull() ?: it.body.orEmpty())
         },
@@ -393,6 +434,7 @@ class ChatApiServiceJvmTest {
             assertRequest(request)
             respond(
                 content = if (encryptResponse) json.encodeToString(listOf(responseBody)) else responseBody,
+                status = status,
                 headers = io.ktor.http.headersOf(
                     HttpHeaders.ContentType,
                     ContentType.Application.Json.toString(),

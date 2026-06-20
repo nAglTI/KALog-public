@@ -16,6 +16,7 @@ data class AvatarSpec(
 enum class ChatType {
     Personal,
     Group,
+    Self,
     Unknown,
 }
 

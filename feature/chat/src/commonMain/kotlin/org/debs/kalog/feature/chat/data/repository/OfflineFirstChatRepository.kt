@@ -5,14 +5,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.crypto.GeneratedAttachmentKey
@@ -28,9 +31,11 @@ import org.debs.kalog.feature.chat.data.crypto.ChatParticipantKey
 import org.debs.kalog.feature.chat.data.local.ChatLocalDataSource
 import org.debs.kalog.feature.chat.data.local.LocalChatMessage
 import org.debs.kalog.feature.chat.data.local.LocalChatThread
+import org.debs.kalog.feature.chat.data.local.isLocalEchoMessageId
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.data.remote.ChatRemoteDataSource
 import org.debs.kalog.feature.chat.data.remote.NicknameProvidedServiceData
+import org.debs.kalog.feature.chat.data.remote.RemoteCreateSelfChatResult
 import org.debs.kalog.feature.chat.data.remote.RemoteChatInfo
 import org.debs.kalog.feature.chat.data.remote.RemoteChatSummary
 import org.debs.kalog.feature.chat.data.remote.RemoteChatUser
@@ -47,10 +52,31 @@ import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
 import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
 import org.debs.kalog.feature.chat.domain.repository.ChatRepository
 import org.debs.kalog.feature.chat.localization.chatLocalized
+import kotlin.random.Random
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
+
+@Serializable
+private data class AccountKeySyncServiceData(
+    @SerialName("eventId") val eventId: String,
+    @SerialName("originDeviceId") val originDeviceId: String,
+    @SerialName("chatId") val chatId: String,
+    @SerialName("chatType") val chatType: String,
+    @SerialName("publicKey") val publicKey: String,
+    @SerialName("privateKeyRef") val privateKeyRef: String,
+    @SerialName("createdAtEpochMillis") val createdAtEpochMillis: Long,
+)
+
+@Serializable
+private data class AccountKeySyncRequestServiceData(
+    @SerialName("eventId") val eventId: String,
+    @SerialName("originDeviceId") val originDeviceId: String,
+    @SerialName("chatId") val chatId: String,
+    @SerialName("createdAtEpochMillis") val createdAtEpochMillis: Long,
+)
 
 internal class OfflineFirstChatRepository(
     private val localDataSource: ChatLocalDataSource,
@@ -66,6 +92,7 @@ internal class OfflineFirstChatRepository(
     private val paginationStates = MutableStateFlow<Map<String, MessagePaginationState>>(emptyMap())
     private var sessionStarted = false
     internal var lastPollTimestamp: String? = null
+    private var lastKnownChatsCatchUpAt: TimeMark? = null
     private val syncLoopJob = MutableStateFlow<Job?>(null)
     private val syncEnabled = MutableStateFlow(true)
     private val nicknameVersion = MutableStateFlow(0)
@@ -99,21 +126,29 @@ internal class OfflineFirstChatRepository(
         syncLoopJob.value = loopJob
 
         try {
-            while (currentCoroutineContext().isActive && syncEnabled.value) {
-                val pollStartedAt = TimeSource.Monotonic.markNow()
+            coroutineScope {
+                val catchUpJob = launch { runKnownChatsCatchUpLoop() }
                 try {
-                    startSession()
-                    ensureUserSession()
-                    applyPolledMessages(
-                        remoteDataSource.pollMessages(
-                            since = lastPollTimestamp ?: MIN_POLL_TIMESTAMP,
-                        ),
-                    )
-                    throttleSuccessfulPollIteration(pollStartedAt)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Throwable) {
-                    delay(CHAT_SYNC_RETRY_DELAY_MS)
+                    while (currentCoroutineContext().isActive && syncEnabled.value) {
+                        val pollStartedAt = TimeSource.Monotonic.markNow()
+                        try {
+                            startSession()
+                            ensureUserSession()
+                            applyPolledMessages(
+                                remoteDataSource.pollMessages(
+                                    since = lastPollTimestamp ?: MIN_POLL_TIMESTAMP,
+                                ),
+                            )
+                            catchUpKnownChatsIfNeeded()
+                            throttleSuccessfulPollIteration(pollStartedAt)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Throwable) {
+                            delay(CHAT_SYNC_RETRY_DELAY_MS)
+                        }
+                    }
+                } finally {
+                    catchUpJob.cancelAndJoin()
                 }
             }
         } finally {
@@ -137,6 +172,7 @@ internal class OfflineFirstChatRepository(
         }
         sessionStarted = false
         lastPollTimestamp = null
+        lastKnownChatsCatchUpAt = null
         paginationStates.value = emptyMap()
         deleteStoredPrivateKeys(localDataSource.observeThreads().value.map(LocalChatThread::id))
         localDataSource.clearAll()
@@ -209,6 +245,134 @@ internal class OfflineFirstChatRepository(
         chatPreferencesDataSource.saveLastOpenedChatId(chatId)
         syncChat(chatId)
         initializePaginationFromLoadedMessages(chatId)
+    }
+
+    override suspend fun refreshChatMessages(chatId: String): Boolean {
+        startSession()
+        ensureUserSession()
+
+        if (chatKeyStore.participantsFor(chatId).isEmpty()) {
+            syncChat(chatId, skipKeyRegistration = true)
+        }
+        if (!ensureChatKeyRegistered(chatId)) return false
+        val history = remoteDataSource.getMessageHistory(
+            chatId = chatId,
+            offset = 0,
+            limit = DEFAULT_MESSAGES_PAGE_SIZE,
+        )
+        if (history.isEmpty()) return false
+
+        val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId } ?: return false
+        val existingMessageIds = thread.messages.mapTo(mutableSetOf(), LocalChatMessage::id)
+        val latestLocalTimestamp = latestTimestamp(
+            thread.messages
+                .filterNot { message -> message.id.isLocalEchoMessageId() }
+                .map(LocalChatMessage::timestamp),
+        )
+        val recentMessages = normalizeMessagesOldestFirst(history)
+            .filter { message -> message.id !in existingMessageIds }
+            .filter { message ->
+                latestLocalTimestamp == null ||
+                    isSameOrNewerTimestamp(message.createdAt, latestLocalTimestamp)
+            }
+        if (recentMessages.isEmpty()) return false
+
+        handleHistoricalNicknameMessages(recentMessages)
+        handleServiceMessages(recentMessages)
+
+        val currentUserId = requireCurrentUserId()
+        val senderIds = recentMessages.map(RemoteMessage::fromUserId)
+            .filter { userId -> userId != currentUserId }
+            .toSet()
+        val chatIdsNeedingParticipantRefresh = if (hasMissingKeysForUsers(chatId, senderIds)) {
+            setOf(chatId)
+        } else {
+            emptySet()
+        }
+
+        val nextPosition = localDataSource.nextMessagePosition(chatId)
+        localDataSource.appendMessages(
+            chatId = chatId,
+            messages = recentMessages.mapIndexed { index, message ->
+                message.toLocal(
+                    currentUserId = currentUserId,
+                    position = nextPosition + index,
+                )
+            },
+        )
+        refreshParticipantsSafely(chatIdsNeedingParticipantRefresh)
+        if (chatPreferencesDataSource.currentOpenedChatId() == chatId) {
+            localDataSource.markChatOpened(chatId)
+        }
+        return true
+    }
+
+    private suspend fun catchUpKnownChatsIfNeeded() {
+        val lastCatchUpAt = lastKnownChatsCatchUpAt
+        if (
+            lastCatchUpAt != null &&
+            lastCatchUpAt.elapsedNow() < KNOWN_CHATS_CATCH_UP_INTERVAL_MS.milliseconds
+        ) {
+            return
+        }
+        lastKnownChatsCatchUpAt = TimeSource.Monotonic.markNow()
+
+        val chatIds = localDataSource.observeThreads().value
+            .sortedByDescending(LocalChatThread::lastMessagePosition)
+            .take(KNOWN_CHATS_CATCH_UP_LIMIT)
+            .map(LocalChatThread::id)
+
+        for (chatId in chatIds) {
+            try {
+                refreshChatMessages(chatId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // Polling and the next catch-up pass can retry transient per-chat failures.
+            }
+        }
+    }
+
+    private suspend fun runKnownChatsCatchUpLoop() {
+        while (currentCoroutineContext().isActive && syncEnabled.value) {
+            try {
+                startSession()
+                ensureUserSession()
+                catchUpKnownChatsIfNeeded()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // Long-poll remains the primary sync path; catch-up retries on its own cadence.
+            }
+            delay(KNOWN_CHATS_CATCH_UP_LOOP_INTERVAL_MS)
+        }
+    }
+
+    private suspend fun appendLocalEchoMessage(
+        chatId: String,
+        currentUserId: String,
+        chunks: List<String>,
+    ) {
+        val nextPosition = localDataSource.nextMessagePosition(chatId)
+        localDataSource.appendMessages(
+            chatId = chatId,
+            messages = listOf(
+                LocalChatMessage(
+                    id = newLocalEchoMessageId(),
+                    chatId = chatId,
+                    sender = currentUserDisplayName(),
+                    encryptedChunks = chunks,
+                    timestamp = Clock.System.now().toString(),
+                    isService = false,
+                    isMine = true,
+                    deliveryStatus = DeliveryStatus.Sent,
+                    position = nextPosition,
+                    messageType = "default",
+                    fromUserId = currentUserId,
+                    toUserId = currentUserId,
+                ),
+            ),
+        )
     }
 
     private suspend fun findAttachmentInChat(
@@ -314,6 +478,8 @@ internal class OfflineFirstChatRepository(
 
         val payloads = chatMessageCipher.encryptOutgoing(chatId, buildMessagePayload(plainText, attachments))
         if (payloads.isEmpty()) return
+        val currentUserId = requireCurrentUserId()
+        val localEchoPayload = payloads.firstOrNull { payload -> payload.recipientId == currentUserId }
 
         remoteDataSource.sendMessage(
             chatId = chatId,
@@ -325,6 +491,13 @@ internal class OfflineFirstChatRepository(
             },
         )
 
+        if (localEchoPayload != null) {
+            appendLocalEchoMessage(
+                chatId = chatId,
+                currentUserId = currentUserId,
+                chunks = localEchoPayload.chunks,
+            )
+        }
         localDataSource.markChatOpened(chatId)
     }
 
@@ -529,6 +702,7 @@ internal class OfflineFirstChatRepository(
         chatKeyStore.saveChatKeyPair(chat.id, chatKeyPair.publicKey, chatKeyPair.privateKeyRef)
         syncChat(chat.id)
         localDataSource.updateInvitationStatus(chat.id, INVITATION_STATUS_ACCEPTED)
+        publishChatKeySyncSafely(chat.id)
         return chat.id
     }
 
@@ -543,7 +717,14 @@ internal class OfflineFirstChatRepository(
         }
         syncChat(chat.id)
         localDataSource.updateInvitationStatus(chat.id, INVITATION_STATUS_ACCEPTED)
+        publishChatKeySyncSafely(chat.id)
         return chat.id
+    }
+
+    override suspend fun ensureSelfChat(): String {
+        startSession()
+        ensureUserSession()
+        return ensureSelfChatInternal()
     }
 
     override suspend fun inviteUserToChat(chatId: String, userId: String) {
@@ -596,7 +777,7 @@ internal class OfflineFirstChatRepository(
         startSession()
         ensureUserSession()
 
-        ensureChatKeyRegistered(chatId)
+        if (!ensureChatKeyRegistered(chatId)) return
         localDataSource.updateInvitationStatus(chatId, INVITATION_STATUS_ACCEPTED)
 
         val nickname = chatPreferencesDataSource.getNickname()
@@ -668,8 +849,15 @@ internal class OfflineFirstChatRepository(
         return null
     }
 
-    private suspend fun ensureChatKeyRegistered(chatId: String) {
-        val currentUserId = chatKeyStore.currentUserId() ?: return
+    private suspend fun ensureChatKeyRegistered(chatId: String): Boolean {
+        val currentUserId = chatKeyStore.currentUserId() ?: return false
+        val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId }
+        if (thread?.typeRaw?.toChatType() == ChatType.Self) {
+            val keyPair = ensureSelfChatKeyPair(chatId)
+            chatKeyStore.saveSelfChatId(chatId)
+            chatKeyStore.saveChatKeyPair(chatId, keyPair.publicKey, keyPair.privateKeyRef)
+            return true
+        }
         val participants = chatKeyStore.participantsFor(chatId)
         val currentUserParticipant = participants.firstOrNull { it.userId == currentUserId }
         val storedPublicKey = chatKeyStore.chatPublicKey(chatId)
@@ -689,7 +877,12 @@ internal class OfflineFirstChatRepository(
             storedKeyPair != null &&
             currentUserParticipant.publicKey == storedKeyPair.publicKey
         ) {
-            return
+            return true
+        }
+
+        if (currentUserParticipant != null && currentUserParticipant.publicKey.isNotBlank() && storedKeyPair == null) {
+            requestChatKeySyncSafely(chatId)
+            return false
         }
 
         val keyPair = storedKeyPair ?: run {
@@ -700,10 +893,16 @@ internal class OfflineFirstChatRepository(
 
         remoteDataSource.setGroupChatPublicKey(chatId, keyPair.publicKey)
         syncChatParticipants(chatId)
+        return true
     }
 
     private suspend fun prepareChatParticipantsForSending(chatId: String) {
-        ensureChatKeyRegistered(chatId)
+        check(ensureChatKeyRegistered(chatId)) {
+            chatLocalized(
+                en = "Chat key sync is pending.",
+                ru = "РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ РєР»СЋС‡Р° С‡Р°С‚Р° РµС‰Рµ РЅРµ Р·Р°РІРµСЂС€РµРЅР°.",
+            )
+        }
         if (hasParticipantsWithMissingKeys(chatId)) {
             syncChatParticipants(chatId)
         }
@@ -747,9 +946,88 @@ internal class OfflineFirstChatRepository(
         return true
     }
 
+    private suspend fun ensureSelfChatInternal(): String {
+        chatKeyStore.selfChatId()?.takeIf(String::isNotBlank)?.let { storedChatId ->
+            val keyPair = ensureSelfChatKeyPair(storedChatId)
+            chatKeyStore.saveChatKeyPair(storedChatId, keyPair.publicKey, keyPair.privateKeyRef)
+            val localThread = localDataSource.observeThreads().value.firstOrNull { thread -> thread.id == storedChatId }
+            if (localThread != null) return storedChatId
+            try {
+                syncChat(storedChatId, skipKeyRegistration = true)
+                localDataSource.updateInvitationStatus(storedChatId, INVITATION_STATUS_ACCEPTED)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                // The stored id can still be opened once the next sync succeeds.
+            }
+            return storedChatId
+        }
+
+        val existingSummary = remoteDataSource.getChats().firstOrNull { chat -> chat.type.isSelfChatType() }
+        if (existingSummary != null) {
+            val keyPair = ensureSelfChatKeyPair(existingSummary.id)
+            rememberSelfChat(existingSummary.id, keyPair)
+            syncChat(existingSummary.id, seedMessages = existingSummary.seedMessages, skipKeyRegistration = true)
+            localDataSource.updateInvitationStatus(existingSummary.id, INVITATION_STATUS_ACCEPTED)
+            return existingSummary.id
+        }
+
+        val keyPair = ensureSelfChatKeyPair()
+        val createdChatId = when (val result = remoteDataSource.createSelfChat(keyPair.publicKey)) {
+            is RemoteCreateSelfChatResult.Created -> result.chat.id
+            RemoteCreateSelfChatResult.AlreadyExists -> (
+                remoteDataSource.getChats().firstOrNull { chat -> chat.type.isSelfChatType() }
+                    ?: error(
+                        chatLocalized(
+                            en = "Self chat already exists but was not returned by the chat list.",
+                            ru = "Self-чат уже существует, но не вернулся в списке чатов.",
+                        ),
+                    )
+            ).id
+        }
+        rememberSelfChat(createdChatId, keyPair)
+        syncChat(createdChatId, skipKeyRegistration = true)
+        localDataSource.updateInvitationStatus(createdChatId, INVITATION_STATUS_ACCEPTED)
+        return createdChatId
+    }
+
+    private suspend fun ensureSelfChatKeyPair(chatId: String? = null): GeneratedKeyPair {
+        val publicKey = chatKeyStore.selfChatPublicKey()
+            ?: chatId?.let { chatKeyStore.chatPublicKey(it) }
+        val privateKeyRef = chatKeyStore.selfChatPrivateKeyRef()
+            ?: chatId?.let { chatKeyStore.chatPrivateKeyRef(it) }
+        if (!publicKey.isNullOrBlank() && privateKeyRef != null) {
+            chatKeyStore.saveSelfChatKeyPair(publicKey, privateKeyRef)
+            return GeneratedKeyPair(publicKey = publicKey, privateKeyRef = privateKeyRef)
+        }
+
+        val keyPair = generateChatKeyPair()
+        chatKeyStore.saveSelfChatKeyPair(keyPair.publicKey, keyPair.privateKeyRef)
+        return keyPair
+    }
+
+    private suspend fun rememberSelfChat(chatId: String, keyPair: GeneratedKeyPair? = null) {
+        chatKeyStore.saveSelfChatId(chatId)
+        val savedKeyPair = keyPair ?: run {
+            val publicKey = chatKeyStore.selfChatPublicKey()
+            val privateKeyRef = chatKeyStore.selfChatPrivateKeyRef()
+            if (!publicKey.isNullOrBlank() && privateKeyRef != null) {
+                GeneratedKeyPair(publicKey = publicKey, privateKeyRef = privateKeyRef)
+            } else {
+                null
+            }
+        }
+        if (savedKeyPair != null) {
+            chatKeyStore.saveChatKeyPair(chatId, savedKeyPair.publicKey, savedKeyPair.privateKeyRef)
+        }
+    }
+
     private suspend fun syncChats() {
         val currentUserId = chatKeyStore.currentUserId() ?: return
         val chatSummaries = remoteDataSource.getChats()
+        chatSummaries.firstOrNull { chat -> chat.type.isSelfChatType() }?.let { chat ->
+            rememberSelfChat(chat.id)
+        }
         val existingChatIds = localDataSource.observeThreads().value.map(LocalChatThread::id).toSet()
         val listedChatIds = chatSummaries.map(RemoteChatSummary::id).toSet()
 
@@ -952,6 +1230,9 @@ internal class OfflineFirstChatRepository(
         currentUserId: String,
         fallbackTitle: String,
     ): String {
+        if (type.toChatType() == ChatType.Self) {
+            return SELF_CHAT_TITLE
+        }
         if (type.toChatType() != ChatType.Personal) {
             return rawTitle.ifBlank { fallbackTitle }
         }
@@ -983,6 +1264,7 @@ internal class OfflineFirstChatRepository(
     private suspend fun deleteStoredPrivateKeys(chatIds: Iterable<String>) {
         val privateKeyRefs = buildList {
             chatKeyStore.currentUserPrivateKeyRef()?.let(::add)
+            chatKeyStore.selfChatPrivateKeyRef()?.let(::add)
             chatIds
                 .distinct()
                 .forEach { chatId -> chatKeyStore.chatPrivateKeyRef(chatId)?.let(::add) }
@@ -990,6 +1272,9 @@ internal class OfflineFirstChatRepository(
                 .getOrNull()
                 ?.let { snapshot ->
                     PrivateKeyRef.deserializeOrNull(snapshot.currentUserPrivateKeyRef)?.let(::add)
+                    snapshot.selfChatPrivateKeyRef?.let { privateKeyRef ->
+                        PrivateKeyRef.deserializeOrNull(privateKeyRef)?.let(::add)
+                    }
                     snapshot.chatKeys.forEach { keyPair ->
                         PrivateKeyRef.deserializeOrNull(keyPair.privateKeyRef)?.let(::add)
                     }
@@ -1105,8 +1390,159 @@ internal class OfflineFirstChatRepository(
                 SERVICE_EVENT_NICKNAME_PROVIDED -> {
                     handleUserNicknameProvided(message)
                 }
+                SERVICE_EVENT_ACCOUNT_KEY_SYNC -> {
+                    handleAccountKeySync(message)
+                }
+                SERVICE_EVENT_ACCOUNT_KEY_SYNC_REQUEST -> {
+                    handleAccountKeySyncRequest(message)
+                }
             }
         }
+    }
+
+    private suspend fun publishChatKeySyncSafely(chatId: String) {
+        try {
+            publishChatKeySync(chatId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            // The next chat list sync or explicit request can retry key synchronization.
+        }
+    }
+
+    private suspend fun publishChatKeySync(chatId: String) {
+        val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId }
+        if (thread?.typeRaw?.toChatType() == ChatType.Self) return
+
+        val publicKey = chatKeyStore.chatPublicKey(chatId)?.takeIf(String::isNotBlank) ?: return
+        val privateKeyRef = chatKeyStore.chatPrivateKeyRef(chatId) ?: return
+        val exportedPrivateKeyRef = encryptionService.exportPrivateKey(privateKeyRef).serialize()
+        val data = AccountKeySyncServiceData(
+            eventId = newServiceEventId(),
+            originDeviceId = requireDeviceId(),
+            chatId = chatId,
+            chatType = thread?.typeRaw.orEmpty(),
+            publicKey = publicKey,
+            privateKeyRef = exportedPrivateKeyRef,
+            createdAtEpochMillis = Clock.System.now().toEpochMilliseconds(),
+        )
+        sendAccountServiceMessage(SERVICE_EVENT_ACCOUNT_KEY_SYNC, json.encodeToString(data))
+    }
+
+    private suspend fun requestChatKeySyncSafely(chatId: String) {
+        try {
+            requestChatKeySync(chatId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            // A later sync pass can request the key again.
+        }
+    }
+
+    private suspend fun requestChatKeySync(chatId: String) {
+        val thread = localDataSource.observeThreads().value.firstOrNull { it.id == chatId }
+        if (thread?.typeRaw?.toChatType() == ChatType.Self) return
+        val data = AccountKeySyncRequestServiceData(
+            eventId = newServiceEventId(),
+            originDeviceId = requireDeviceId(),
+            chatId = chatId,
+            createdAtEpochMillis = Clock.System.now().toEpochMilliseconds(),
+        )
+        sendAccountServiceMessage(SERVICE_EVENT_ACCOUNT_KEY_SYNC_REQUEST, json.encodeToString(data))
+    }
+
+    private suspend fun sendAccountServiceMessage(eventType: String, payloadJson: String) {
+        val selfChatId = ensureSelfChatInternal()
+        val currentUserId = requireCurrentUserId()
+        val selfPublicKey = chatKeyStore.selfChatPublicKey()?.takeIf(String::isNotBlank)
+            ?: chatKeyStore.chatPublicKey(selfChatId)?.takeIf(String::isNotBlank)
+            ?: return
+        val encryptedDataChunks = encryptionService.encryptToChunks(payloadJson, selfPublicKey)
+        remoteDataSource.sendServiceMessage(
+            chatId = selfChatId,
+            payloads = listOf(
+                RemoteSendPayload(
+                    recipientId = currentUserId,
+                    chunks = listOf(eventType) + encryptedDataChunks,
+                ),
+            ),
+        )
+    }
+
+    private suspend fun handleAccountKeySync(message: RemoteMessage) {
+        val data = decodeAccountServiceMessageData<AccountKeySyncServiceData>(message) ?: return
+        if (data.originDeviceId == requireDeviceId()) return
+        if (data.chatId.isBlank() || data.publicKey.isBlank() || data.privateKeyRef.isBlank()) return
+        if (chatKeyStore.chatPrivateKeyRef(data.chatId) != null) return
+
+        val exportedPrivateKeyRef = runCatching { PrivateKeyRef.deserialize(data.privateKeyRef) }
+            .getOrNull() as? PrivateKeyRef.Exported ?: return
+        if (!isValidKeyPair(data.publicKey, exportedPrivateKeyRef)) return
+
+        val currentUserId = requireCurrentUserId()
+        val chatInfo = runCatching { remoteDataSource.getChatInfo(data.chatId) }.getOrNull() ?: return
+        val serverPublicKey = chatInfo.users
+            .firstOrNull { user -> user.userId == currentUserId }
+            ?.publicKey
+            ?.takeIf(String::isNotBlank)
+            ?: return
+        if (serverPublicKey != data.publicKey) return
+
+        val importedPrivateKeyRef = encryptionService.importPrivateKey(
+            publicKey = data.publicKey,
+            privateKey = exportedPrivateKeyRef,
+        )
+        try {
+            chatKeyStore.saveChatKeyPair(data.chatId, data.publicKey, importedPrivateKeyRef)
+            syncChat(data.chatId, skipKeyRegistration = true)
+            localDataSource.updateInvitationStatus(data.chatId, INVITATION_STATUS_ACCEPTED)
+        } catch (error: Throwable) {
+            runCatching { encryptionService.deletePrivateKey(importedPrivateKeyRef) }
+            throw error
+        }
+    }
+
+    private suspend fun handleAccountKeySyncRequest(message: RemoteMessage) {
+        val data = decodeAccountServiceMessageData<AccountKeySyncRequestServiceData>(message) ?: return
+        if (data.originDeviceId == requireDeviceId()) return
+        if (data.chatId.isBlank()) return
+        if (chatKeyStore.chatPrivateKeyRef(data.chatId) == null) return
+        publishChatKeySyncSafely(data.chatId)
+    }
+
+    private suspend inline fun <reified T> decodeAccountServiceMessageData(message: RemoteMessage): T? {
+        if (message.chatId != chatKeyStore.selfChatId()) return null
+        val payloadChunks = message.chunks.drop(1)
+        if (payloadChunks.isEmpty()) return null
+        val decryptedPayload = chatMessageCipher.decryptIncomingBody(
+            chatId = message.chatId,
+            chunks = payloadChunks,
+            isEncrypted = true,
+        ) ?: return null
+        if (decryptedPayload.isBlank()) return null
+        return runCatching { json.decodeFromString<T>(decryptedPayload) }.getOrNull()
+    }
+
+    private suspend fun isValidKeyPair(publicKey: String, privateKeyRef: PrivateKeyRef): Boolean {
+        val challenge = "mayday-key-check-${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
+        return runCatching {
+            encryptionService.decrypt(encryptionService.encrypt(challenge, publicKey), privateKeyRef) == challenge
+        }.getOrDefault(false)
+    }
+
+    private suspend fun requireDeviceId(): String {
+        chatKeyStore.deviceId()?.takeIf(String::isNotBlank)?.let { return it }
+        val deviceId = "device-${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
+        chatKeyStore.saveDeviceId(deviceId)
+        return deviceId
+    }
+
+    private fun newServiceEventId(): String {
+        return "event-${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
+    }
+
+    private fun newLocalEchoMessageId(): String {
+        return "local-${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
     }
 
     private suspend fun decodeServiceMessageData(message: RemoteMessage): ServiceMessageData? {
@@ -1398,6 +1834,11 @@ internal class OfflineFirstChatRepository(
         updateLastPollTimestamp(listOfNotNull(candidate))
     }
 
+    private fun isSameOrNewerTimestamp(candidate: String, boundary: String): Boolean {
+        if (candidate.isBlank()) return false
+        return candidate == boundary || latestTimestamp(listOf(candidate, boundary)) == candidate
+    }
+
     private suspend fun generateChatKeyPair(): GeneratedKeyPair {
         return encryptionService.generateKeyPair()
     }
@@ -1416,17 +1857,25 @@ internal class OfflineFirstChatRepository(
         }
     }
 
+    private fun String.isSelfChatType(): Boolean = toChatType() == ChatType.Self
+
     private companion object {
         private const val CHAT_SYNC_RETRY_DELAY_MS = 5_000L
         private const val MIN_SUCCESSFUL_POLL_INTERVAL_MS = 750L
+        private const val KNOWN_CHATS_CATCH_UP_LOOP_INTERVAL_MS = 1_000L
+        private const val KNOWN_CHATS_CATCH_UP_INTERVAL_MS = 5_000L
+        private const val KNOWN_CHATS_CATCH_UP_LIMIT = 20
         private const val DEFAULT_MESSAGES_PAGE_SIZE = 20
         private const val MIN_POLL_TIMESTAMP = "1970-01-01T00:00:00Z"
         private const val SERVICE_EVENT_USER_ADDED = "user_added"
         private const val SERVICE_EVENT_PUBLIC_KEY_PROVIDED = "public_key_provided"
         private const val SERVICE_EVENT_USER_NICKNAME_PROVIDED = "user_nickname_provided"
         private const val SERVICE_EVENT_NICKNAME_PROVIDED = "nickname_provided"
+        private const val SERVICE_EVENT_ACCOUNT_KEY_SYNC = "account_key_sync_v1"
+        private const val SERVICE_EVENT_ACCOUNT_KEY_SYNC_REQUEST = "account_key_sync_request_v1"
         private const val INVITATION_STATUS_PENDING = "pending"
         private const val INVITATION_STATUS_ACCEPTED = "accepted"
         private const val ATTACHMENT_UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024
+        private const val SELF_CHAT_TITLE = "Saved Messages"
     }
 }

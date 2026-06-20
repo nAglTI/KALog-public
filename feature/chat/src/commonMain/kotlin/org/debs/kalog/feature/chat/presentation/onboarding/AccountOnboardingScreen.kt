@@ -1,5 +1,6 @@
 package org.debs.kalog.feature.chat.presentation.onboarding
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,7 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,8 +32,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
+import org.debs.kalog.feature.chat.presentation.text.asString
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun AccountOnboardingRoute(
@@ -45,12 +49,32 @@ fun AccountOnboardingRoute(
         if (state.isReady) onReady()
     }
 
+    if (state.isChecking || state.isReady) {
+        AccountOnboardingGateScreen()
+        return
+    }
+
     AccountOnboardingScreen(
         state = state,
         onCreateNewClick = { viewModel.onEvent(AccountOnboardingEvent.CreateNewAccountClicked) },
         onImportPasswordChange = { viewModel.onEvent(AccountOnboardingEvent.ImportPasswordChanged(it)) },
         onImportClick = { viewModel.onEvent(AccountOnboardingEvent.ImportBackupClicked) },
     )
+}
+
+@Composable
+private fun AccountOnboardingGateScreen(
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator()
+    }
 }
 
 @Composable
@@ -82,17 +106,14 @@ fun AccountOnboardingScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = chatLocalized(en = "Mayday Chat account", ru = "Аккаунт Mayday Chat"),
+                text = stringResource(Res.string.mayday_chat_account),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = chatLocalized(
-                    en = "Your account is your UUID and encryption keys. Import a backup to continue as the same user, or create a new account for this device.",
-                    ru = "Ваш аккаунт - это UUID и ключи шифрования. Импортируйте резервную копию, чтобы продолжить как тот же пользователь, или создайте новый аккаунт для этого устройства.",
-                ),
+                text = stringResource(Res.string.account_onboarding_description),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -100,27 +121,21 @@ fun AccountOnboardingScreen(
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text(
-                        text = chatLocalized(
-                            en = "Import encrypted backup",
-                            ru = "Импорт зашифрованной копии",
-                        ),
+                        text = stringResource(Res.string.import_encrypted_backup),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = chatLocalized(
-                            en = "Choose a Mayday backup file and enter the password it was protected with. The file cannot be read without that password.",
-                            ru = "Выберите файл резервной копии Mayday и введите пароль, которым он был защищён. Без этого пароля файл нельзя прочитать.",
-                        ),
+                        text = stringResource(Res.string.import_encrypted_backup_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -129,23 +144,23 @@ fun AccountOnboardingScreen(
                         onValueChange = onImportPasswordChange,
                         modifier = Modifier.fillMaxWidth(),
                         label = {
-                            Text(chatLocalized(en = "Backup password", ru = "Пароль от резервной копии"))
+                            Text(stringResource(Res.string.backup_password))
                         },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = MaterialTheme.shapes.large,
                     )
                     Button(
                         onClick = onImportClick,
                         enabled = !state.isImporting && state.importPassword.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = CircleShape,
                     ) {
                         Text(
                             if (state.isImporting) {
-                                chatLocalized(en = "Importing...", ru = "Импорт...")
+                                stringResource(Res.string.importing)
                             } else {
-                                chatLocalized(en = "Choose backup file", ru = "Выбрать файл копии")
+                                stringResource(Res.string.choose_backup_file)
                             },
                         )
                     }
@@ -157,7 +172,7 @@ fun AccountOnboardingScreen(
                 horizontalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    text = chatLocalized(en = "or", ru = "или"),
+                    text = stringResource(Res.string.or_label),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -166,15 +181,15 @@ fun AccountOnboardingScreen(
             OutlinedButton(
                 onClick = onCreateNewClick,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = CircleShape,
             ) {
-                Text(chatLocalized(en = "Create new account", ru = "Создать новый аккаунт"))
+                Text(stringResource(Res.string.create_new_account))
             }
 
             state.message?.let { message ->
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = message,
+                    text = message.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -183,7 +198,7 @@ fun AccountOnboardingScreen(
             state.error?.let { error ->
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = error,
+                    text = error.asString(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,

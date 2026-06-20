@@ -26,6 +26,17 @@ data class CreateGroupChatRequestDto(
 )
 
 @Serializable
+data class CreateSelfChatRequestDto(
+    @SerialName("pk") val publicKey: String,
+)
+
+sealed interface CreateSelfChatResultDto {
+    data class Created(val chat: ChatResponseDto) : CreateSelfChatResultDto
+
+    data object AlreadyExists : CreateSelfChatResultDto
+}
+
+@Serializable
 data class InviteUserToChatRequestDto(
     @SerialName("chat_id") val chatId: String,
     @SerialName("uid") val userId: String,

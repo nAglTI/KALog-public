@@ -81,6 +81,32 @@ class SettingsChatKeyStoreJvmTest {
         assertTrue(initialRevision != keyStore.currentKeyRevision())
     }
 
+    @Test
+    fun exportsAndImportsSelfChatSyncKeys() = runBlocking {
+        val source = SettingsChatKeyStore(InMemoryKeyValueStorage(), InMemorySecureKeyValueStorage(), Json)
+        source.saveCurrentUserKeys(
+            userId = "user-id",
+            publicKey = "user-public-key",
+            privateKeyRef = PrivateKeyRef.Exported("user-private-key"),
+        )
+        source.saveSelfChatId("self-chat-id")
+        source.saveSelfChatKeyPair(
+            publicKey = "self-public-key",
+            privateKeyRef = PrivateKeyRef.Exported("self-private-key"),
+        )
+
+        val snapshot = source.exportSnapshot()
+        val target = SettingsChatKeyStore(InMemoryKeyValueStorage(), InMemorySecureKeyValueStorage(), Json)
+
+        target.importSnapshot(snapshot)
+
+        assertEquals("self-chat-id", target.selfChatId())
+        assertEquals("self-public-key", target.selfChatPublicKey())
+        assertEquals(PrivateKeyRef.Exported("self-private-key"), target.selfChatPrivateKeyRef())
+        assertEquals("self-public-key", target.chatPublicKey("self-chat-id"))
+        assertEquals(PrivateKeyRef.Exported("self-private-key"), target.chatPrivateKeyRef("self-chat-id"))
+    }
+
     private companion object {
         private const val CURRENT_USER_PRIVATE_KEY = "chat.keys.current_user.private"
     }

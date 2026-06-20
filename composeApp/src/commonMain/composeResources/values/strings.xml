@@ -1,0 +1,4 @@
+<resources>
+    <string name="device_lock_required">Device lock required</string>
+    <string name="device_lock_required_description">Mayday Chat can open, but account creation, backup import, UUID registration, and key generation are disabled until you set up a system PIN, password, or biometric lock.</string>
+</resources>

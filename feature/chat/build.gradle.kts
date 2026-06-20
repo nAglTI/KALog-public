@@ -18,6 +18,9 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
+        androidResources {
+            enable = true
+        }
     }
     jvm()
     if (isAppleHost) {
@@ -42,6 +45,7 @@ kotlin {
             implementation(libs.compose.foundation)
             implementation(libs.compose.material.icons.extended)
             implementation(libs.compose.material3)
+            implementation(libs.compose.components.resources)
             implementation(libs.compose.runtime)
             implementation(libs.compose.ui)
             implementation(libs.compose.ui.backhandler)

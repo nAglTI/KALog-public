@@ -1,5 +1,6 @@
 package org.debs.kalog
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -28,11 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import mayday_chat.composeapp.generated.resources.Res
+import mayday_chat.composeapp.generated.resources.*
 import org.debs.kalog.app.AppExitManager
 import org.debs.kalog.feature.chat.data.preferences.AppThemeMode
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.domain.usecase.CloseChatUseCase
-import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 import org.debs.kalog.feature.chat.presentation.chat.ChatDetailsRoute
 import org.debs.kalog.feature.chat.presentation.chatinfo.ChatInfoRoute
@@ -43,6 +45,7 @@ import org.debs.kalog.feature.chat.presentation.platform.DesktopAutostartManager
 import org.debs.kalog.feature.chat.presentation.session.ChatSessionViewModel
 import org.debs.kalog.feature.chat.presentation.settings.SettingsRoute
 import org.debs.kalog.ui.theme.KalogTheme
+import org.jetbrains.compose.resources.stringResource
 import org.koin.compose.koinInject
 
 private sealed interface AppScreen {
@@ -169,7 +172,7 @@ private fun ProtectedDeviceLockRequiredScreen() {
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surface,
             shape = MaterialTheme.shapes.large,
-            tonalElevation = 2.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
             Column(
                 modifier = Modifier.padding(22.dp),
@@ -177,20 +180,14 @@ private fun ProtectedDeviceLockRequiredScreen() {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = chatLocalized(
-                        en = "Device lock required",
-                        ru = "Нужна блокировка устройства",
-                    ),
+                    text = stringResource(Res.string.device_lock_required),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    text = chatLocalized(
-                        en = "Mayday Chat can open, but account creation, backup import, UUID registration, and key generation are disabled until you set up a system PIN, password, or biometric lock.",
-                        ru = "Mayday Chat может открыться, но создание аккаунта, импорт резервных копий, регистрация UUID и генерация ключей отключены, пока вы не настроите системный PIN-код, пароль или биометрическую блокировку.",
-                    ),
+                    text = stringResource(Res.string.device_lock_required_description),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

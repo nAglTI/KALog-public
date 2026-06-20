@@ -122,6 +122,22 @@ internal class InMemoryChatLocalDataSource : ChatLocalDataSource {
     ): List<LocalChatMessage> {
         val merged = existingMessages.associateBy(LocalChatMessage::id).toMutableMap()
         incomingMessages.forEach { incoming ->
+            val matchingLocalEchoId = if (!incoming.id.isLocalEchoMessageId()) {
+                merged.values.firstOrNull { existing ->
+                    existing.id.isLocalEchoMessageId() && existing.hasSameLocalEchoFingerprint(incoming)
+                }?.id
+            } else {
+                null
+            }
+            if (matchingLocalEchoId != null) {
+                merged.remove(matchingLocalEchoId)
+            } else if (incoming.id.isLocalEchoMessageId() && merged.values.any { existing ->
+                    !existing.id.isLocalEchoMessageId() && existing.hasSameLocalEchoFingerprint(incoming)
+                }
+            ) {
+                return@forEach
+            }
+
             val existing = merged[incoming.id]
             merged[incoming.id] = if (existing == null) {
                 incoming
@@ -142,6 +158,19 @@ internal class InMemoryChatLocalDataSource : ChatLocalDataSource {
         }
         return merged.values.sortedBy(LocalChatMessage::position)
     }
+}
+
+internal fun String.isLocalEchoMessageId(): Boolean = startsWith("local-")
+
+private fun LocalChatMessage.hasSameLocalEchoFingerprint(other: LocalChatMessage): Boolean {
+    return !isService &&
+        !other.isService &&
+        isMine == true &&
+        other.isMine == true &&
+        fromUserId == other.fromUserId &&
+        toUserId == other.toUserId &&
+        encryptedChunks.isNotEmpty() &&
+        encryptedChunks == other.encryptedChunks
 }
 
 private fun Collection<LocalChatThread>.sortForDisplay(): List<LocalChatThread> {

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -18,9 +19,13 @@ import org.debs.kalog.feature.chat.domain.usecase.LoadMoreChatMessagesUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatDetailsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
+import org.debs.kalog.feature.chat.domain.usecase.RefreshChatMessagesUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RequestChatAttachmentDownloadUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import org.debs.kalog.feature.chat.presentation.text.UiText
+import org.debs.kalog.feature.chat.presentation.text.uiText
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 
 class ChatDetailsViewModel(
     private val chatId: String,
@@ -28,6 +33,7 @@ class ChatDetailsViewModel(
     private val openChatUseCase: OpenChatUseCase,
     private val sendChatMessageUseCase: SendChatMessageUseCase,
     private val prepareChatAttachmentUseCase: PrepareChatAttachmentUseCase,
+    private val refreshChatMessagesUseCase: RefreshChatMessagesUseCase,
     private val loadMoreChatMessagesUseCase: LoadMoreChatMessagesUseCase,
     private val inviteUserToChatUseCase: InviteUserToChatUseCase,
     private val acceptChatInvitationUseCase: AcceptChatInvitationUseCase,
@@ -42,6 +48,7 @@ class ChatDetailsViewModel(
 
     private var sendMessageJob: Job? = null
     private var prepareAttachmentJob: Job? = null
+    private var refreshMessagesJob: Job? = null
     private var loadMoreMessagesJob: Job? = null
     private var inviteUserJob: Job? = null
     private var invitationJob: Job? = null
@@ -49,6 +56,7 @@ class ChatDetailsViewModel(
 
     init {
         openChat()
+        startRecentMessageRefresh()
         observeChat()
     }
 
@@ -105,6 +113,22 @@ class ChatDetailsViewModel(
         }
     }
 
+    private fun startRecentMessageRefresh() {
+        refreshMessagesJob?.cancel()
+        refreshMessagesJob = viewModelScope.launch {
+            while (true) {
+                try {
+                    refreshChatMessagesUseCase(chatId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    // The main sync loop handles transient network recovery.
+                }
+                delay(RECENT_MESSAGE_REFRESH_INTERVAL_MS)
+            }
+        }
+    }
+
     private fun sendMessage() {
         val draft = state.value.draft
         val attachments = state.value.pendingAttachments
@@ -144,7 +168,7 @@ class ChatDetailsViewModel(
         }
     }
 
-    private fun notifyAttachmentPickerPending(message: String) {
+    private fun notifyAttachmentPickerPending(message: UiText) {
         viewModelScope.launch {
             _effect.emit(ChatDetailsEffect.ShowMessage(message))
         }
@@ -169,7 +193,6 @@ class ChatDetailsViewModel(
         prepareAttachmentJob = viewModelScope.launch {
             _state.update { it.copy(isPreparingAttachment = true) }
             var failedAttachmentCount = 0
-            var firstFailureMessage: String? = null
             try {
                 attachmentsToPrepare.forEach { attachment ->
                     try {
@@ -203,18 +226,10 @@ class ChatDetailsViewModel(
                         throw error
                     } catch (error: Throwable) {
                         failedAttachmentCount += 1
-                        if (firstFailureMessage == null) {
-                            firstFailureMessage = error.message?.takeIf(String::isNotBlank)
-                                ?: error::class.simpleName
-                                ?: chatLocalized(en = "unknown error", ru = "неизвестная ошибка")
-                        }
                     }
                 }
                 if (failedAttachmentCount > 0) {
-                    val message = firstFailureMessage?.let { reason ->
-                        "${prepareAttachmentError()} $reason"
-                    } ?: prepareAttachmentError()
-                    _effect.emit(ChatDetailsEffect.ShowError(message))
+                    _effect.emit(ChatDetailsEffect.ShowError(prepareAttachmentError()))
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -328,40 +343,20 @@ class ChatDetailsViewModel(
 
     private companion object {
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 10
+        private const val RECENT_MESSAGE_REFRESH_INTERVAL_MS = 2_000L
 
-        private fun sendMessageError(): String = chatLocalized(
-            en = "Could not encrypt or send the message. Nothing was sent.",
-            ru = "Не удалось зашифровать или отправить сообщение. Ничего не отправлено.",
-        )
+        private fun sendMessageError(): UiText = uiText(Res.string.send_message_failed)
 
-        private fun prepareAttachmentError(): String = chatLocalized(
-            en = "Could not prepare or upload one or more attachments.",
-            ru = "Не удалось подготовить или загрузить одно или несколько вложений.",
-        )
+        private fun prepareAttachmentError(): UiText = uiText(Res.string.prepare_attachment_failed)
 
-        private fun downloadAttachmentError(): String = chatLocalized(
-            en = "Could not start downloading the attachment.",
-            ru = "Не удалось начать скачивание вложения.",
-        )
+        private fun downloadAttachmentError(): UiText = uiText(Res.string.download_attachment_failed)
 
-        private fun waitAttachmentsUploadMessage(): String = chatLocalized(
-            en = "Wait until attachments finish uploading.",
-            ru = "Дождитесь окончания загрузки вложений.",
-        )
+        private fun waitAttachmentsUploadMessage(): UiText = uiText(Res.string.wait_attachments_upload)
 
-        private fun attachFilePendingMessage(): String = chatLocalized(
-            en = "File picking is unavailable on this platform or was cancelled.",
-            ru = "Выбор файла недоступен на этой платформе или был отменён.",
-        )
+        private fun attachFilePendingMessage(): UiText = uiText(Res.string.file_picking_unavailable_or_cancelled)
 
-        private fun pickImagePendingMessage(): String = chatLocalized(
-            en = "Image picking is unavailable on this platform or was cancelled.",
-            ru = "Выбор изображения недоступен на этой платформе или был отменён.",
-        )
+        private fun pickImagePendingMessage(): UiText = uiText(Res.string.image_picking_unavailable_or_cancelled)
 
-        private fun recordVoicePendingMessage(): String = chatLocalized(
-            en = "Voice recording on this platform requires a native recorder.",
-            ru = "Для записи голоса на этой платформе нужен нативный рекордер.",
-        )
+        private fun recordVoicePendingMessage(): UiText = uiText(Res.string.voice_recording_requires_native_recorder)
     }
 }

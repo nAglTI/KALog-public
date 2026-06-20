@@ -404,6 +404,9 @@ private suspend fun decodeServiceMessageBody(
     }
 
     return when (eventType) {
+        "account_key_sync_v1",
+        "account_key_sync_request_v1" -> null
+
         "user_added" -> if (debugMode) "user_added${payload?.let { " $it" }.orEmpty()}" else null
 
         "public_key_provided" -> {
@@ -611,6 +614,7 @@ internal fun buildSubtitle(type: String, users: List<RemoteChatUser>): String {
             en = "Members: ${users.size.coerceAtLeast(1)}",
             ru = "Участников: ${users.size.coerceAtLeast(1)}",
         )
+        ChatType.Self -> ""
         ChatType.Personal -> chatLocalized(en = "Personal chat", ru = "Личный чат")
         ChatType.Unknown -> when {
             users.size > 2 -> chatLocalized(
@@ -624,10 +628,15 @@ internal fun buildSubtitle(type: String, users: List<RemoteChatUser>): String {
 }
 
 internal fun String.toChatType(): ChatType {
+    val normalized = trim()
     return when {
-        contains("group", ignoreCase = true) -> ChatType.Group
-        isBlank() -> ChatType.Unknown
-        else -> ChatType.Personal
+        normalized.equals("self", ignoreCase = true) -> ChatType.Self
+        normalized.contains("group", ignoreCase = true) -> ChatType.Group
+        normalized.equals("personal", ignoreCase = true) ||
+            normalized.equals("direct", ignoreCase = true) ||
+            normalized.equals("private", ignoreCase = true) -> ChatType.Personal
+        normalized.isBlank() -> ChatType.Unknown
+        else -> ChatType.Unknown
     }
 }
 

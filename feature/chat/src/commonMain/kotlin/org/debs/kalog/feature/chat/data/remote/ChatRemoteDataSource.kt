@@ -3,6 +3,8 @@ package org.debs.kalog.feature.chat.data.remote
 import org.debs.kalog.feature.chat.data.remote.api.ChatApiService
 import org.debs.kalog.feature.chat.data.remote.api.CreateDirectChatRequestDto
 import org.debs.kalog.feature.chat.data.remote.api.CreateGroupChatRequestDto
+import org.debs.kalog.feature.chat.data.remote.api.CreateSelfChatRequestDto
+import org.debs.kalog.feature.chat.data.remote.api.CreateSelfChatResultDto
 import org.debs.kalog.feature.chat.data.remote.api.InviteUserToChatRequestDto
 import org.debs.kalog.feature.chat.data.remote.api.LeaveGroupChatRequestDto
 import org.debs.kalog.feature.chat.data.remote.api.SendDataDto
@@ -28,6 +30,8 @@ interface ChatRemoteDataSource {
     suspend fun createDirectChat(targetUserId: String, publicKey: String): RemoteChatCreated
 
     suspend fun createGroupChat(publicKey: String): RemoteChatCreated
+
+    suspend fun createSelfChat(publicKey: String): RemoteCreateSelfChatResult = error("Self chat is not implemented.")
 
     suspend fun inviteUserToChat(chatId: String, userId: String)
 
@@ -179,6 +183,13 @@ class KtorChatRemoteDataSource(
             CreateGroupChatRequestDto(publicKey = publicKey),
         )
         return response.toRemote()
+    }
+
+    override suspend fun createSelfChat(publicKey: String): RemoteCreateSelfChatResult {
+        return when (val response = chatApiService.createSelfChat(CreateSelfChatRequestDto(publicKey = publicKey))) {
+            is CreateSelfChatResultDto.Created -> RemoteCreateSelfChatResult.Created(response.chat.toRemote())
+            CreateSelfChatResultDto.AlreadyExists -> RemoteCreateSelfChatResult.AlreadyExists
+        }
     }
 
     override suspend fun inviteUserToChat(chatId: String, userId: String) {

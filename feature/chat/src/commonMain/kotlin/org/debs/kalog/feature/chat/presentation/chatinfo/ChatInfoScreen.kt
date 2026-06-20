@@ -1,5 +1,6 @@
 package org.debs.kalog.feature.chat.presentation.chatinfo
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -17,8 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
@@ -48,11 +47,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
 import org.debs.kalog.feature.chat.domain.model.ChatType
-import org.debs.kalog.feature.chat.localization.chatLocalized
 import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
+import org.debs.kalog.feature.chat.presentation.components.SavedMessagesAvatar
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun ChatInfoScreen(
@@ -86,10 +88,7 @@ fun ChatInfoScreen(
             if (state.participants.isNotEmpty()) {
                 item(key = "participants-header") {
                     Text(
-                        text = chatLocalized(
-                            en = "Participants (${state.participants.size})",
-                            ru = "Участники (${state.participants.size})",
-                        ),
+                        text = stringResource(Res.string.participants_count, state.participants.size),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -121,8 +120,8 @@ private fun ChatInfoHeader(
     onBack: () -> Unit,
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        shadowElevation = 10.dp,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
             modifier = Modifier
@@ -132,22 +131,29 @@ private fun ChatInfoHeader(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
+            Surface(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .size(36.dp)
+                    .clip(MaterialTheme.shapes.medium)
                     .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
+                shape = MaterialTheme.shapes.medium,
+                color = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
-    Text(
-        text = chatLocalized(en = "Chat info", ru = "Информация о чате"),
+            Text(
+                text = stringResource(Res.string.chat_info),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -170,17 +176,21 @@ private fun ChatInfoAvatarSection(
             .padding(vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AvatarBadge(
-            avatar = state.avatar,
-            modifier = Modifier.size(80.dp),
-        )
+        if (state.type == ChatType.Self) {
+            SavedMessagesAvatar(modifier = Modifier.size(80.dp))
+        } else {
+            AvatarBadge(
+                avatar = state.avatar,
+                modifier = Modifier.size(80.dp),
+            )
+        }
         Spacer(modifier = Modifier.height(16.dp))
 
         if (isEditing && state.type == ChatType.Group) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 4.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 BasicTextField(
                     value = editingTitle,
@@ -195,8 +205,8 @@ private fun ChatInfoAvatarSection(
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     decorationBox = { innerTextField ->
                         if (editingTitle.isBlank()) {
-                Text(
-                    text = chatLocalized(en = "Chat title", ru = "Название чата"),
+                            Text(
+                                text = stringResource(Res.string.chat_title),
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -211,16 +221,17 @@ private fun ChatInfoAvatarSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .clickable {
                             isEditing = false
                             editingTitle = state.title
                         },
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
-        Text(
-            text = chatLocalized(en = "Cancel", ru = "Отмена"),
+                    Text(
+                        text = stringResource(Res.string.cancel),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -228,18 +239,18 @@ private fun ChatInfoAvatarSection(
                 }
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .clickable {
                             if (editingTitle.isNotBlank()) {
                                 onTitleChanged(editingTitle)
                             }
                             isEditing = false
                         },
-                    shape = RoundedCornerShape(18.dp),
+                    shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.primary,
                 ) {
-        Text(
-            text = chatLocalized(en = "Save", ru = "Сохранить"),
+                    Text(
+                        text = stringResource(Res.string.save),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -248,10 +259,10 @@ private fun ChatInfoAvatarSection(
                 }
             }
         } else {
-    Text(
-        text = state.title.ifBlank {
-            chatLocalized(en = "Untitled chat", ru = "Чат без названия")
-        },
+            Text(
+                text = state.title.ifBlank {
+                    stringResource(Res.string.untitled_chat)
+                },
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -270,16 +281,20 @@ private fun ChatInfoAvatarSection(
             )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-    text = when (state.type) {
-        ChatType.Group -> chatLocalized(en = "Group chat", ru = "Групповой чат")
-        ChatType.Personal -> chatLocalized(en = "Personal chat", ru = "Личный чат")
-        ChatType.Unknown -> ""
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        val typeLabel = when (state.type) {
+            ChatType.Group -> stringResource(Res.string.group_chat)
+            ChatType.Self -> ""
+            ChatType.Personal -> stringResource(Res.string.personal_chat)
+            ChatType.Unknown -> ""
+        }
+        if (typeLabel.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = typeLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -326,10 +341,7 @@ private fun ParticipantRow(
                                         isParticipantMenuVisible = true
                                     }
                                 },
-                                onLongClickLabel = chatLocalized(
-                                    en = "Copy UUID",
-                                    ru = "Копировать UUID",
-                                ),
+                                onLongClickLabel = stringResource(Res.string.copy_uuid),
                             )
                     } else {
                         Modifier
@@ -351,7 +363,7 @@ private fun ParticipantRow(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (participant.isCurrentUser) {
-                            "${participant.displayName} (${chatLocalized(en = "you", ru = "вы")})"
+                            "${participant.displayName} (${stringResource(Res.string.you_lowercase)})"
                         } else {
                             participant.displayName
                         },
@@ -363,7 +375,7 @@ private fun ParticipantRow(
                     )
                     if (!participant.isCurrentUser) {
                         Text(
-                            text = chatLocalized(en = "Message", ru = "Написать"),
+                            text = stringResource(Res.string.message),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -376,7 +388,7 @@ private fun ParticipantRow(
             onDismissRequest = { isParticipantMenuVisible = false },
         ) {
             DropdownMenuItem(
-                text = { Text(chatLocalized(en = "Copy UUID", ru = "Копировать UUID")) },
+                text = { Text(stringResource(Res.string.copy_uuid)) },
                 onClick = {
                     clipboardManager.setText(AnnotatedString(participant.userId))
                     isParticipantMenuVisible = false

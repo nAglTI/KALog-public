@@ -8,7 +8,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
-import org.debs.kalog.feature.chat.localization.chatLocalized
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun ChatTypeSelectionDialog(
@@ -21,19 +23,13 @@ fun ChatTypeSelectionDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = chatLocalized(
-                    en = "Create chat",
-                    ru = "Создать чат",
-                ),
+                text = stringResource(Res.string.create_chat),
                 style = MaterialTheme.typography.titleMedium,
             )
         },
         text = {
             Text(
-                text = chatLocalized(
-                    en = "Choose what you want to create.",
-                    ru = "Выберите тип чата.",
-                ),
+                text = stringResource(Res.string.choose_chat_type),
                 style = MaterialTheme.typography.bodyMedium,
             )
         },
@@ -42,7 +38,7 @@ fun ChatTypeSelectionDialog(
                 enabled = !isProcessing,
                 onClick = onDismiss,
             ) {
-                Text(chatLocalized(en = "Cancel", ru = "Отмена"))
+                Text(stringResource(Res.string.cancel))
             }
         },
         confirmButton = {
@@ -51,15 +47,17 @@ fun ChatTypeSelectionDialog(
                     enabled = !isProcessing,
                     onClick = onCreatePersonalChat,
                 ) {
-                    Text(chatLocalized(en = "Personal", ru = "Личный"))
+                    Text(stringResource(Res.string.personal))
                 }
                 TextButton(
                     enabled = !isProcessing,
                     onClick = onCreateGroupChat,
                 ) {
-                    Text(chatLocalized(en = "Group", ru = "Групповой"))
+                    Text(stringResource(Res.string.group))
                 }
             }
         },
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surface,
     )
 }

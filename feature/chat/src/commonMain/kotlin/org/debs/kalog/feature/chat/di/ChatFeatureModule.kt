@@ -28,6 +28,7 @@ import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CloseChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ClearOldCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.DeclineChatInvitationUseCase
+import org.debs.kalog.feature.chat.domain.usecase.EnsureSelfChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
 import org.debs.kalog.feature.chat.domain.usecase.InviteUserToChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.LeaveGroupChatUseCase
@@ -36,6 +37,7 @@ import org.debs.kalog.feature.chat.domain.usecase.ObserveChatDetailsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
+import org.debs.kalog.feature.chat.domain.usecase.RefreshChatMessagesUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RequestChatAttachmentDownloadUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RunChatSyncLoopUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
@@ -73,6 +75,7 @@ val chatFeatureModule = module {
     factory { CloseChatUseCase(get()) }
     factory { CreateDirectChatUseCase(get()) }
     factory { CreateGroupChatUseCase(get()) }
+    factory { EnsureSelfChatUseCase(get()) }
     factory { GetChatParticipantsUseCase(get()) }
     factory { DeclineChatInvitationUseCase(get()) }
     factory { GetCurrentUserIdUseCase(get()) }
@@ -85,13 +88,14 @@ val chatFeatureModule = module {
     factory { ObserveChatDetailsUseCase(get()) }
     factory { OpenChatUseCase(get()) }
     factory { PrepareChatAttachmentUseCase(get()) }
+    factory { RefreshChatMessagesUseCase(get()) }
     factory { RequestChatAttachmentDownloadUseCase(get()) }
     factory { SendChatMessageUseCase(get()) }
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
     factory { AccountOnboardingViewModel(get(), get(), get(), get(), get()) }
-    factory { ChatListViewModel(get(), get(), get(), get()) }
+    factory { ChatListViewModel(get(), get(), get(), get(), get()) }
     factory { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
-    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatInfoViewModel(chatId, get(), get(), get(), get()) }
 }
