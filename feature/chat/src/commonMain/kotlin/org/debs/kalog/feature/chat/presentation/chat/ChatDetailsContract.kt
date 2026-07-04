@@ -28,7 +28,6 @@ data class ChatDetailsUiState(
 ) {
     val canSend: Boolean
         get() = (draft.isNotBlank() || pendingAttachments.isNotEmpty()) &&
-            !isSendingMessage &&
             !isPreparingAttachment &&
             invitationStatus != InvitationStatus.Pending
 

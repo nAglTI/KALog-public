@@ -2,183 +2,165 @@
 
 [Read in Russian](README.ru.md)
 
-Mayday Chat is a Kotlin Multiplatform secure chat client for Android, iOS, and Desktop JVM. The project uses Compose Multiplatform for UI, Koin for dependency injection, Ktor for networking, and dedicated modules for cryptography, preferences, and secure key storage.
+Mayday Chat is a Kotlin Multiplatform secure messaging client for Android, iOS, and Desktop JVM (Windows and macOS). It is built as a project with a privacy-first product model: users connect by sharing an app-generated UUID instead of using phone numbers, email addresses, or public social identifiers.
 
-This README intentionally does not include backend addresses, real UUIDs, keys, internal hosts, or low-level cryptographic protocol details.
+## Screenshots
 
-## What the application does
+<table>
+  <tr>
+    <td>
+      <img src="docs/images/readme/chat-list.jpg" alt="Chat list and settings" width="1050" /><br />
+      <sub>Chat list, Saved Messages, group chat preview, and quick access to settings.</sub>
+    </td>
+    <td>
+      <img src="docs/images/readme/personal-chat.jpg" alt="Personal chat" width="1050" /><br />
+      <sub>Personal chat created by another user's UUID.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="docs/images/readme/group-chat.jpg" alt="Group chat" width="1050" /><br />
+      <sub>Group chat with participants, invitation flow, and editable title.</sub>
+    </td>
+    <td>
+      <img src="docs/images/readme/attachments.jpg" alt="Attachments in chat" width="1050" /><br />
+      <sub>Image and file attachments inside a regular chat flow.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="docs/images/readme/settings.jpg" alt="Settings and account backup" width="1050" /><br />
+      <sub>Settings screen with UUID, nickname, theme, backup, and import controls.</sub>
+    </td>
+    <td>
+      <img src="docs/images/readme/backup-import.jpg" alt="Android to Windows account import" width="1600" /><br />
+      <sub>Account backup/import demo from Android to Windows Desktop.</sub>
+    </td>
+  </tr>
+</table>
 
-Mayday Chat provides a compact secure messaging flow:
+## Demo Videos
 
-- initializes a user session and shows the current user UUID;
-- lets the user copy that UUID and share it out of band;
-- creates personal chats by another user's UUID;
-- creates group chats and invites users by UUID;
-- opens chats, shows current conversation state, and loads older history;
-- keeps a background sync loop for incoming messages and unread counters;
-- supports full cleanup of local app data.
+- [Onboarding, app lock, personal chats, group chats, and attachments](https://github.com/nAglTI/KALog-public/releases/latest/download/full-onboarding-and-chats-demo.mp4)
+- [Password-protected account backup and Android to Windows import](https://github.com/nAglTI/KALog-public/releases/latest/download/account-backup-android-to-windows-demo.mp4)
 
-## How the application works
+## What It Can Do
 
-### User flow
+- Create a new account without phone or email sign-up.
+- Show the user's UUID so it can be shared manually with another person.
+- Create personal chats by another user's UUID.
+- Create group chats and invite participants by UUID.
+- Send text messages, images, videos, and other file attachments.
+- Use Saved Messages as a private space for notes and files.
+- Protect the app startup with system device authentication where available.
+- Export and import an account backup to move the same demo account between devices.
+- Switch theme, edit nickname, and clear local app data.
 
-1. On startup, the app initializes a local session and receives the user UUID from the backend service.
-2. The main screen shows the current UUID and the list of available chats.
-3. The user can:
-   - create a personal chat by entering another user's UUID;
-   - create a group chat and then invite participants from the chat screen.
-4. When a chat is opened, the app shows available messages and can load older history on demand.
-5. Sending and receiving messages are synchronized in the background, while the UI updates previews and unread counters.
-6. The `Wipe App` action removes local cache, keys, and settings.
+## Privacy Model
 
-### Technical flow
+Mayday Chat uses UUIDs as public contact identifiers because phone numbers and email addresses can directly connect an account to a real person. A UUID is still an identifier, but it is not personal contact data by itself.
 
-- `ChatSessionViewModel` starts the continuous sync loop.
-- `ChatListViewModel` initializes the session, loads the current UUID, observes chats, creates chats, and clears local data.
-- `ChatDetailsViewModel` opens the selected chat, sends messages, loads older history, and invites users into group chats.
-- `OfflineFirstChatRepository` coordinates local cache, remote calls, participant keys, encryption/decryption, and incremental synchronization.
-- Incoming messages are decrypted locally before being rendered on screen.
+This keeps the contact flow explicit:
 
-## How to use
+- users decide when and where to share their UUID;
+- the app does not require phone book access for account creation;
+- there is no email or phone number login flow in the product model;
+- someone cannot find a user by guessing their personal contact details inside the app.
 
-### Basic workflow
+This does not mean the app promises complete anonymity. The backend still needs service data to route chats and deliver messages. The goal is narrower and practical: avoid collecting personal login identifiers when they are not needed for the messenger experience.
 
-1. Launch the app and wait until your UUID appears on the main screen.
-2. Press `Copy UUID` and share that UUID with another user through a safe external channel.
-3. Press `Create Chat`:
-   - choose `Personal` to create a one-to-one chat by UUID;
-   - choose `Group` to create a group chat.
-4. Open the required chat from the list and type a message in the composer.
-5. In a group chat, use `Invite` to add another participant by UUID.
-6. If older history is available, press `Load older messages`.
-7. If you need to remove local traces of app activity, use `Wipe App`.
+## Data Protection
 
-### Important runtime behavior
+The project is designed around client-side protection of chat content and account data:
 
-- The sync loop starts automatically.
-- Unread counters increase only for chats that are not currently open.
-- The `Invite` action is available only in group chats.
-- On Android and Desktop, clearing data attempts to close the app after cleanup. On iOS, the app resets UI state instead of force-closing the process.
+- message content is prepared on the client before it is sent to the server;
+- received content is processed locally before it is shown in the UI;
+- account backups are protected by a user-provided password;
+- local data can be wiped from the app settings.
 
-## Data protection
+The startup lock is an important part of the security model. Chat keys and account secrets have to exist on the user's device, otherwise the app could not decrypt messages or move an account between devices. Because of that, Mayday Chat does not treat local storage as the only line of defense. The app also uses platform security gates before showing account data or letting sensitive account flows run.
 
-### Cryptography principle
+Platform behavior is intentionally different:
 
-Mayday Chat uses asymmetric cryptography as the basis for protecting transport payloads and message contents. Key material is generated on the client device, the public part is shared only where it is required for communication, and the private part stays on the device. Message contents are decrypted locally on the recipient side.
+- Android uses the system device unlock flow: biometrics or device credentials depending on OS version and device setup.
+- Windows Desktop uses a native credentials prompt with Windows Hello support where the system provides it, with a fallback to the current user's Windows credentials.
+- macOS Desktop uses Keychain-backed user presence checks, which can be satisfied by Touch ID, Apple Watch unlock, or the device password depending on the user's system configuration.
+- iOS stores sensitive account values through Keychain-backed storage, keeping platform-specific protection behind the same secure storage bridge used by the shared app code.
 
-For safety reasons, this README does not describe exact protocol steps, key formats, algorithm parameters, or other low-level implementation details.
+The product principle is the same across targets: account UI and locally stored encryption material should be protected by the strongest owner-verification mechanism that the platform can provide.
 
-### How user data is protected
+Low-level protocol details, key formats, internal hosts, and private test environment values are intentionally not documented in this public README.
 
-- Message text is protected on the client before it is sent over the network.
-- For multi-recipient delivery, outgoing payloads are prepared separately for each recipient.
-- Protected server responses are decrypted locally before being transformed into UI models.
-- Private keys are stored separately from regular user settings.
-- The app can remove regular settings, secure storage, and local chat cache in a single cleanup action.
+## Product Flow
 
-### Local storage model
+1. The user opens the app and passes the device unlock check if it is enabled.
+2. A new account can be created without entering personal contact data.
+3. The user copies their UUID and shares it with another person through any external channel.
+4. A personal or group chat can be created by entering another user's UUID.
+5. Messages and attachments appear in the chat list and conversation screens.
+6. A password-protected backup can be created and imported on another device.
 
-- Android: private keys are stored in encrypted local storage backed by Android Keystore.
-- iOS: private keys are stored through Keychain-backed storage.
-- Desktop JVM: secure settings currently rely on user preferences. That is acceptable for development, but weaker than OS-level secret vaults and should be hardened before production use.
-- In the current chat implementation, the chat list and loaded messages live in runtime memory. A dedicated `core/database` module already exists, but the current chat flow has not yet been migrated to persistent local storage.
+## Architecture And Engineering Notes
 
-### Important security boundaries
+Mayday Chat is split into shared and platform-specific modules.
 
-- Mayday Chat protects message content and protected request payloads, but the backend still processes service metadata required for chat routing.
-- The initial session bootstrap exchanges public information needed for the protected channel; the main API flow uses protected requests after that point.
-- Application-level cryptographic protection should complement transport hardening and release hardening, not replace them.
+- `composeApp` contains the shared Compose Multiplatform UI, navigation, app bootstrap, and dependency wiring.
+- `androidApp` hosts the Android entry point.
+- `KALog` contains the iOS host project.
+- `feature/chat` contains chat screens, presentation state, use cases, repository coordination, chat creation, invitations, attachments, and backup/import flows.
+- `core/network` contains the network client and API integration layer.
+- `core/preferences` contains regular and protected key-value storage abstractions.
+- `core/crypto` contains shared data protection abstractions used by chat and account flows.
+- `core/database` is prepared for local persistence work.
 
-## Architecture
+The project follows a layered structure:
 
-The project is split into shared and platform-specific modules.
+- UI and ViewModels expose screen state and user actions.
+- Use cases keep feature entry points explicit.
+- Repositories coordinate network calls, local state, account data, chat state, and background synchronization.
+- Platform bridges isolate Android, iOS, and Desktop behavior such as file picking, sharing, app lock, and local secure storage.
 
-### Module overview
+### Platform Bridges
 
-- `androidApp/` - Android launcher application.
-- `composeApp/` - shared Compose UI, app bootstrap, and platform DI bindings.
-- `feature/chat/` - chat module: presentation, use cases, repository, remote/local sources, and chat-specific crypto logic.
-- `core/crypto/` - cryptographic abstractions, key generation, and encryption services.
-- `core/network/` - Ktor client, secure request wrapping, transport security provider, and network configuration.
-- `core/preferences/` - regular and secure key-value storage with platform-specific implementations.
-- `core/database/` - SQLDelight layer prepared for local persistence.
-- `KALog/` - iOS host app and Xcode project.
+The shared Kotlin code owns the product flow, while platform bridges provide the operating-system pieces that cannot be implemented once in common code:
 
-### Layers
+- startup owner verification;
+- protected key-value storage;
+- account backup file picking and sharing;
+- attachment picking, preview, opening, and sharing;
+- desktop-specific packaging and application lifecycle behavior.
 
-- Presentation layer: Compose screens, routes, dialogs, and ViewModels.
-- Domain layer: use cases and chat domain models.
-- Data layer: repository, API adapter, local cache, settings, and key storage.
-- Platform layer: HTTP clients, database drivers, secure settings factories, and platform-specific behavior.
+This keeps the chat feature mostly shared while still allowing each platform to use its native security model instead of a lowest-common-denominator abstraction.
 
-## Build and run
+### Key Storage Strategy
 
-### Requirements
+The app uses a shared interface for account and chat secrets, but the implementation is platform-aware:
 
-- JDK 11+
-- Android Studio or IntelliJ IDEA for Android/Desktop development
-- Xcode on macOS for iOS build and run
-- A compatible backend environment available outside this repository
+- Android relies on Android's secure storage facilities and the configured device lock.
+- iOS uses Keychain-backed storage for sensitive values.
+- Windows Desktop uses Windows-protected local storage and native credential gates.
+- macOS Desktop uses Keychain-backed storage and Keychain user-presence checks.
 
-### Android
+Account backup/import is part of the product, so the project has to balance two goals: keys must be protected locally, but an explicit user action must still be able to export a password-protected account backup. This is why the README describes the security model at a product and architecture level rather than exposing low-level key formats.
 
-- In IDE: run the `androidApp` configuration.
-- Windows:
+## Tech Stack
 
-```powershell
-.\gradlew.bat :androidApp:assembleDebug
-```
+- Kotlin Multiplatform
+- Compose Multiplatform
+- Kotlin Coroutines and Flow
+- Koin
+- Ktor
+- SQLDelight module prepared for persistence
+- Android, iOS, and Desktop JVM targets
+- Platform specific security libraries and technologies
 
-- macOS/Linux:
+The engineering work is in the combination of Kotlin Multiplatform, Compose Multiplatform UI, modular feature boundaries, platform-specific integrations, account portability, and privacy-oriented product decisions.
 
-```bash
-./gradlew :androidApp:assembleDebug
-```
+## Current Status
 
-### Desktop JVM
+This repository is a public project in alpha state. It demonstrates the app flow, cross-platform UI, chat logic, account backup/import, platform security bridges, and privacy-oriented contact model.
 
-- Windows:
-
-```powershell
-.\gradlew.bat :composeApp:run
-```
-
-- macOS/Linux:
-
-```bash
-./gradlew :composeApp:run
-```
-
-### iOS
-
-Open [KALog.xcodeproj](./KALog/KALog.xcodeproj) in Xcode and run the `KALog` target on macOS.
-
-## Screenshots and diagrams
-### Main screen screenshot
-
-<img src="docs/images/chat-list.png" alt="Main screen" width="420" />
-
-### Chat screen screenshot
-
-<img src="docs/images/chat-details.png" alt="Chat screen" width="420" />
-
-### Create/invite screenshots
-
-<img src="docs/images/create-chat-dialog.png" alt="Create chat dialog" width="320" /> <img src="docs/images/invite-chat-dialog.png" alt="Group chat invitation dialog" width="320" />
-
-### Wipe app screenshot
-
-<img src="docs/images/wipe-app-dialog.png" alt="Wipe app dialog" width="420" />
-
-### Architecture diagram
-
-Coming soon.
-
-## Current limitations and production recommendations
-
-- The current chat cache is in memory; persistent storage is prepared in `core/database`, but is not used yet.
-- Desktop secure storage should be replaced with a stronger OS-level secret storage integration.
-- Production deployment should enforce HTTPS/TLS, harden release configuration, and minimize network debug logging.
+Because the project is still alpha, server availability issues, application bugs, incomplete translations, and unfinished edge-case handling are expected.
 
 ## License
 

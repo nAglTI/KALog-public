@@ -52,7 +52,7 @@
     <string name="clear_files_older_than_days">Очищать файлы старше, дней</string>
     <string name="clear_old">Очистить старые</string>
     <string name="clear_all">Очистить всё</string>
-    <string name="wipe_app">Стереть приложение</string>
+    <string name="wipe_app">Очистить приложение (удалить аккаунт)</string>
     <string name="chat_info">Информация о чате</string>
     <string name="chat_title">Название чата</string>
     <string name="untitled_chat">Чат без названия</string>
@@ -134,7 +134,7 @@
     <string name="attachment_detail_error">ошибка</string>
     <string name="delivery_sending">Отправка</string>
     <string name="delivery_sent">Отправлено</string>
-    <string name="delivery_read">Прочитано</string>
+    <string name="delivery_failed">Ошибка отправки</string>
     <string name="duration_seconds_suffix"> с</string>
     <string name="bytes_unit_b">Б</string>
     <string name="bytes_unit_kb">КБ</string>

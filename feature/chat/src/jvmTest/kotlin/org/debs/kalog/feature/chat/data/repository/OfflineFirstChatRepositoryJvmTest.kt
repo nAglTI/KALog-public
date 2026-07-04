@@ -1,43 +1,28 @@
 package org.debs.kalog.feature.chat.data.repository
 
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.debs.kalog.core.crypto.EncryptionService
-import org.debs.kalog.core.crypto.GeneratedKeyPair
 import org.debs.kalog.core.crypto.GeneratedAttachmentKey
+import org.debs.kalog.core.crypto.GeneratedKeyPair
+import org.debs.kalog.core.crypto.PrivateKeyRef
 import org.debs.kalog.feature.chat.data.cache.CachedChatAttachment
 import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.cache.EncryptedCachedAttachmentPart
 import org.debs.kalog.feature.chat.data.cache.NoOpChatAttachmentFileCache
-import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
-import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
-import org.debs.kalog.feature.chat.data.crypto.ChatKeySnapshot
-import org.debs.kalog.feature.chat.data.crypto.ChatParticipantKey
-import org.debs.kalog.feature.chat.data.crypto.StoredChatKeyPair
-import org.debs.kalog.feature.chat.data.crypto.StoredChatParticipants
-import org.debs.kalog.core.crypto.PrivateKeyRef
+import org.debs.kalog.feature.chat.data.crypto.*
 import org.debs.kalog.feature.chat.data.local.ChatLocalDataSource
 import org.debs.kalog.feature.chat.data.local.LocalChatMessage
 import org.debs.kalog.feature.chat.data.local.LocalChatThread
 import org.debs.kalog.feature.chat.data.preferences.AppThemeMode
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
 import org.debs.kalog.feature.chat.data.remote.*
-import org.debs.kalog.feature.chat.domain.model.AvatarAccent
-import org.debs.kalog.feature.chat.domain.model.ChatAttachment
-import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
-import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
-import org.debs.kalog.feature.chat.domain.model.ChatMessage
-import org.debs.kalog.feature.chat.domain.model.ChatType
-import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
-import org.debs.kalog.feature.chat.domain.model.InvitationStatus
+import org.debs.kalog.feature.chat.domain.model.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 
 class OfflineFirstChatRepositoryJvmTest {
     @Test
@@ -260,7 +245,7 @@ class OfflineFirstChatRepositoryJvmTest {
         val syncJob = launch { repository.runSyncLoop() }
         remoteDataSource.awaitBlockedPollStarted()
 
-        withTimeout(1_000) {
+        withTimeout(1_000.milliseconds) {
             localDataSource.observeThreads()
                 .map { threads -> threads.firstOrNull { thread -> thread.id == chatId }?.messages?.map(LocalChatMessage::id) }
                 .first { ids -> ids == listOf("1", "2") }
@@ -291,7 +276,7 @@ class OfflineFirstChatRepositoryJvmTest {
                             timestamp = "2026-03-21T10:00:00Z",
                             isService = false,
                             isMine = false,
-                            deliveryStatus = DeliveryStatus.Read,
+                            deliveryStatus = null,
                             position = 1,
                             messageType = "default",
                             fromUserId = "user-2",
@@ -901,7 +886,7 @@ class OfflineFirstChatRepositoryJvmTest {
         )
 
         runCatching {
-            withTimeout(200) {
+            withTimeout(200.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -939,7 +924,7 @@ class OfflineFirstChatRepositoryJvmTest {
         val repository = createRepository(remoteDataSource = remoteDataSource)
 
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -987,7 +972,7 @@ class OfflineFirstChatRepositoryJvmTest {
         val syncJob = launch { repository.runSyncLoop() }
         remoteDataSource.awaitBlockedPollStarted()
 
-        withTimeout(500) {
+        withTimeout(500.milliseconds) {
             repository.clearAllData()
         }
         remoteDataSource.releaseBlockedPoll(
@@ -1108,7 +1093,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.openChat(chatId)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -1189,7 +1174,7 @@ class OfflineFirstChatRepositoryJvmTest {
                     timestamp = latestTimestamp,
                     isService = false,
                     isMine = true,
-                    deliveryStatus = org.debs.kalog.feature.chat.domain.model.DeliveryStatus.Sent,
+                    deliveryStatus = DeliveryStatus.Sent,
                     position = 2L,
                     messageType = "text",
                     fromUserId = "user-1",
@@ -1199,7 +1184,7 @@ class OfflineFirstChatRepositoryJvmTest {
         )
         repository.lastPollTimestamp = null
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -1252,7 +1237,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.openChat(chatId)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -1284,7 +1269,7 @@ class OfflineFirstChatRepositoryJvmTest {
         val repository = createRepository(remoteDataSource = remoteDataSource)
 
         runCatching {
-            withTimeout(250) {
+            withTimeout(250.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -1358,7 +1343,7 @@ class OfflineFirstChatRepositoryJvmTest {
             ),
         )
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -1434,7 +1419,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.openChat(openedChatId)
         runCatching {
-            withTimeout(200) {
+            withTimeout(200.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -1502,7 +1487,7 @@ class OfflineFirstChatRepositoryJvmTest {
         repository.openChat(existingChatId)
         repeat(2) {
             runCatching {
-                withTimeout(150) {
+                withTimeout(150.milliseconds) {
                     repository.runSyncLoop()
                 }
             }
@@ -1524,7 +1509,7 @@ class OfflineFirstChatRepositoryJvmTest {
                     subtitle = "2 members",
                     typeRaw = "group",
                     avatarInitials = "GC",
-                    avatarAccent = org.debs.kalog.feature.chat.domain.model.AvatarAccent.Rose,
+                    avatarAccent = AvatarAccent.Rose,
                     unreadCount = 3,
                     messages = listOf(
                         LocalChatMessage(
@@ -1535,7 +1520,7 @@ class OfflineFirstChatRepositoryJvmTest {
                             timestamp = existingTimestamp,
                             isService = false,
                             isMine = true,
-                            deliveryStatus = org.debs.kalog.feature.chat.domain.model.DeliveryStatus.Sent,
+                            deliveryStatus = DeliveryStatus.Sent,
                             position = 1,
                             messageType = "text",
                             fromUserId = "user-1",
@@ -2347,7 +2332,7 @@ class OfflineFirstChatRepositoryJvmTest {
         assertEquals(null, attachment.contentBytes)
         assertEquals(null, attachment.localUri)
 
-        val cachedAttachment = withTimeout(1_000) {
+        val cachedAttachment = withTimeout(1_000.milliseconds) {
             repository.observeChat(chatId)
                 .filterNotNull()
                 .map { thread ->
@@ -2427,7 +2412,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.openChat(chatId)
 
-        val waitingAttachment = withTimeout(1_000) {
+        val waitingAttachment = withTimeout(1_000.milliseconds) {
             repository.observeChat(chatId)
                 .filterNotNull()
                 .map { thread ->
@@ -2446,7 +2431,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.requestAttachmentDownload(chatId, "attachment-1")
 
-        val cachedAttachment = withTimeout(1_000) {
+        val cachedAttachment = withTimeout(1_000.milliseconds) {
             repository.observeChat(chatId)
                 .filterNotNull()
                 .map { thread ->
@@ -2538,7 +2523,7 @@ class OfflineFirstChatRepositoryJvmTest {
         repository.openChat(chatId)
         remoteDataSource.updateChatInfo(chatId, updatedChatInfo)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -2621,7 +2606,7 @@ class OfflineFirstChatRepositoryJvmTest {
         repository.openChat(chatId)
         remoteDataSource.updateChatInfo(chatId, updatedChatInfo)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -2693,7 +2678,7 @@ class OfflineFirstChatRepositoryJvmTest {
         repository.openChat(chatId)
         remoteDataSource.updateChatInfo(chatId, updatedChatInfo)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -2855,7 +2840,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.openChat(chatId)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -2997,7 +2982,7 @@ class OfflineFirstChatRepositoryJvmTest {
 
         repository.openChat(chatId)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -3101,15 +3086,15 @@ class OfflineFirstChatRepositoryJvmTest {
                     }
                 }
         }
-        withTimeout(100) { observerReady.await() }
+        withTimeout(100.milliseconds) { observerReady.await() }
 
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
 
-        assertEquals("Alice", withTimeout(500) { observedNickname.await() })
+        assertEquals("Alice", withTimeout(500.milliseconds) { observedNickname.await() })
         observer.cancel()
     }
 
@@ -3184,7 +3169,7 @@ class OfflineFirstChatRepositoryJvmTest {
         repository.openChat(chatId)
         remoteDataSource.updateChatInfo(chatId, updatedChatInfo)
         runCatching {
-            withTimeout(100) {
+            withTimeout(100.milliseconds) {
                 repository.runSyncLoop()
             }
         }
@@ -3229,18 +3214,6 @@ private fun serviceMessage(
         type = "service",
         chunks = listOfNotNull(eventType, payload),
         createdAt = createdAt,
-    )
-}
-
-private fun groupChatInfo(chatId: String, otherUserId: String): RemoteChatInfo {
-    return RemoteChatInfo(
-        id = chatId,
-        title = chatId,
-        type = "group",
-        users = listOf(
-            RemoteChatUser(userId = "user-1", publicKey = "public-key"),
-            RemoteChatUser(userId = otherUserId, publicKey = "public-key-$otherUserId"),
-        ),
     )
 }
 
@@ -3418,8 +3391,8 @@ private fun LocalChatMessage.hasSameLocalEchoFingerprintForTest(other: LocalChat
 
 private class FakeChatRemoteDataSource(
     private val startSession: RemoteStartSession,
-    private val chats: List<RemoteChatSummary>,
-    private val chatInfoById: Map<String, RemoteChatInfo>,
+    chats: List<RemoteChatSummary>,
+    chatInfoById: Map<String, RemoteChatInfo>,
     private val historyByOffset: Map<Int, List<RemoteMessage>>,
     private val pollResults: List<RemotePolledMessages> = emptyList(),
     private var getChatsFailuresRemaining: Int = 0,

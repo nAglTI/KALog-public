@@ -52,7 +52,7 @@
     <string name="clear_files_older_than_days">Clear files older than, days</string>
     <string name="clear_old">Clear old</string>
     <string name="clear_all">Clear all</string>
-    <string name="wipe_app">Wipe app</string>
+    <string name="wipe_app">Wipe app (delete account)</string>
     <string name="chat_info">Chat info</string>
     <string name="chat_title">Chat title</string>
     <string name="untitled_chat">Untitled chat</string>
@@ -134,7 +134,7 @@
     <string name="attachment_detail_error">error</string>
     <string name="delivery_sending">Sending</string>
     <string name="delivery_sent">Sent</string>
-    <string name="delivery_read">Read</string>
+    <string name="delivery_failed">Failed</string>
     <string name="duration_seconds_suffix">s</string>
     <string name="bytes_unit_b">B</string>
     <string name="bytes_unit_kb">KB</string>

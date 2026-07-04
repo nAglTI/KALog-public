@@ -465,7 +465,7 @@ internal fun RemoteMessage.toLocal(
         timestamp = createdAt,
         isService = isService,
         isMine = if (isService) null else isMine,
-        deliveryStatus = if (isService) null else if (isMine) DeliveryStatus.Sent else DeliveryStatus.Read,
+        deliveryStatus = if (isService || !isMine) null else DeliveryStatus.Sent,
         position = position,
         messageType = type,
         fromUserId = fromUserId,

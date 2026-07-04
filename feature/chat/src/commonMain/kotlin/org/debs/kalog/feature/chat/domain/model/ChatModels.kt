@@ -23,7 +23,7 @@ enum class ChatType {
 enum class DeliveryStatus {
     Sending,
     Sent,
-    Read,
+    Failed,
 }
 
 enum class InvitationStatus {

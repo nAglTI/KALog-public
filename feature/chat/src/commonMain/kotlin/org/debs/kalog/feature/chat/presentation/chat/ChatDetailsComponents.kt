@@ -1,129 +1,44 @@
 package org.debs.kalog.feature.chat.presentation.chat
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.draganddrop.dragAndDropTarget
-import androidx.compose.foundation.focusable
+import androidx.compose.animation.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.TextSelectionColors
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.AttachFile
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.ContentPaste
-import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Remove
-import androidx.compose.material.icons.outlined.Send
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.key
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.PointerInputScope
-import androidx.compose.ui.input.pointer.isSecondaryPressed
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.draganddrop.DragAndDropEvent
-import androidx.compose.ui.draganddrop.DragAndDropTarget
-import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isMetaPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.decodeToImageBitmap
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -136,34 +51,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import org.debs.kalog.feature.chat.presentation.platform.hasSoftwareKeyboard
-import org.debs.kalog.feature.chat.presentation.platform.ConfigureSystemBars
-import org.debs.kalog.feature.chat.presentation.platform.loadImagePreview
-import org.debs.kalog.feature.chat.presentation.platform.loadVideoThumbnail
-import org.debs.kalog.feature.chat.presentation.platform.openLocalAttachment
-import org.debs.kalog.feature.chat.presentation.platform.PlatformVideoPlayer
-import org.debs.kalog.feature.chat.presentation.platform.playLocalAudio
-import org.debs.kalog.feature.chat.presentation.platform.readDroppedAttachments
-import org.debs.kalog.feature.chat.presentation.platform.seekLocalAudio
-import org.debs.kalog.feature.chat.presentation.platform.stopLocalAudio
-import org.debs.kalog.feature.chat.domain.model.AvatarAccent
-import org.debs.kalog.feature.chat.domain.model.AvatarSpec
-import org.debs.kalog.feature.chat.domain.model.ChatAttachment
-import org.debs.kalog.feature.chat.domain.model.ChatAttachmentKind
-import org.debs.kalog.feature.chat.domain.model.ChatAttachmentLoadState
-import org.debs.kalog.feature.chat.domain.model.ChatMessage
-import org.debs.kalog.feature.chat.domain.model.ChatType
-import org.debs.kalog.feature.chat.domain.model.DeliveryStatus
-import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
-import mayday_chat.feature.chat.generated.resources.Res
 import mayday_chat.feature.chat.generated.resources.*
+import org.debs.kalog.feature.chat.domain.model.*
+import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
+import org.debs.kalog.feature.chat.presentation.components.SavedMessagesAvatar
+import org.debs.kalog.feature.chat.presentation.platform.*
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.math.sqrt
-import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
-import org.debs.kalog.feature.chat.presentation.components.SavedMessagesAvatar
 
 @Composable
 internal fun MessageList(
@@ -518,19 +414,7 @@ internal fun UserMessageBubble(
                         onSeekVoicePlayback = onSeekVoicePlayback,
                     )
                 }
-                Text(
-                    text = if (message.isMine) {
-                        "${message.timestamp}  |  ${message.deliveryStatus.label()}"
-                    } else {
-                        message.timestamp
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (message.isMine) {
-                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
+                MessageFooter(message)
             }
         }
         MessageCopyDropdownMenu(
@@ -540,6 +424,69 @@ internal fun UserMessageBubble(
                 clipboardManager.setText(AnnotatedString(message.body))
             },
         )
+    }
+}
+
+@Composable
+private fun MessageFooter(message: ChatMessage.User) {
+    val footerColor = if (message.isMine) {
+        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    if (message.isMine) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = message.timestamp,
+                style = MaterialTheme.typography.labelMedium,
+                color = footerColor,
+            )
+            DeliveryStatusIndicator(
+                status = message.deliveryStatus,
+                tint = footerColor,
+            )
+        }
+    } else {
+        Text(
+            text = message.timestamp,
+            style = MaterialTheme.typography.labelMedium,
+            color = footerColor,
+        )
+    }
+}
+
+@Composable
+private fun DeliveryStatusIndicator(
+    status: DeliveryStatus,
+    tint: Color,
+) {
+    when (status) {
+        DeliveryStatus.Sending -> {
+            CircularProgressIndicator(
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 1.5.dp,
+                color = tint,
+            )
+        }
+        DeliveryStatus.Sent -> {
+            Icon(
+                imageVector = Icons.Outlined.Check,
+                contentDescription = stringResource(Res.string.delivery_sent),
+                tint = tint,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+        DeliveryStatus.Failed -> {
+            Icon(
+                imageVector = Icons.Outlined.ErrorOutline,
+                contentDescription = status.label(),
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -1548,35 +1495,6 @@ private fun FullScreenImageControl(
     }
 }
 
-@Composable
-private fun RowScope.FullScreenGalleryNavigation(
-    hasPrevious: Boolean,
-    hasNext: Boolean,
-    positionLabel: String,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-) {
-    if (positionLabel.isBlank()) return
-    FullScreenImageControl(
-        enabled = hasPrevious,
-        icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-        contentDescription = stringResource(Res.string.previous_media),
-        onClick = onPrevious,
-    )
-    Text(
-        text = positionLabel,
-        style = MaterialTheme.typography.labelLarge,
-        color = Color.White.copy(alpha = 0.84f),
-        fontWeight = FontWeight.SemiBold,
-    )
-    FullScreenImageControl(
-        enabled = hasNext,
-        icon = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-        contentDescription = stringResource(Res.string.next_media),
-        onClick = onNext,
-    )
-}
-
 private suspend fun PointerInputScope.detectFullScreenImageGestures(
     onZoom: (Float) -> Unit,
     onPan: (Offset) -> Unit,
@@ -2332,7 +2250,6 @@ internal fun MessageComposer(
     pendingAttachments: List<PreparedChatAttachment>,
     attachmentUploadProgress: AttachmentUploadProgress?,
     isPreparingAttachment: Boolean,
-    isSendingMessage: Boolean,
     canSend: Boolean,
     onDraftChanged: (String) -> Unit,
     onSendClick: () -> Unit,
@@ -2350,9 +2267,9 @@ internal fun MessageComposer(
     val shouldRecordVoice = draft.isBlank() && pendingAttachments.isEmpty()
     val shouldUseVoiceAction = isRecordingVoice || shouldRecordVoice
     val isPrimaryEnabled = if (shouldUseVoiceAction) {
-        !isPreparingAttachment && !isSendingMessage
+        !isPreparingAttachment
     } else {
-        canSend && !isPreparingAttachment && !isSendingMessage
+        canSend && !isPreparingAttachment
     }
 
     LaunchedEffect(Unit) {
@@ -2486,7 +2403,7 @@ internal fun MessageComposer(
                                 onDraftChanged(draft + "\n")
                                 true
                             } else {
-                                if (canSend && !isSendingMessage) {
+                                if (canSend) {
                                     onSendClick()
                                     focusRequester.requestFocus()
                                 }
@@ -2537,28 +2454,20 @@ internal fun MessageComposer(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (isSendingMessage && !shouldUseVoiceAction) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(22.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        } else {
-                            Icon(
+                        Icon(
                                 imageVector = when {
                                     isRecordingVoice -> Icons.Outlined.Stop
                                     shouldRecordVoice -> Icons.Outlined.Mic
-                                    else -> Icons.Outlined.Send
+                                    else -> Icons.AutoMirrored.Outlined.Send
                                 },
-                                contentDescription = when {
-                                    isRecordingVoice -> stringResource(Res.string.stop_recording)
-                                    shouldRecordVoice -> stringResource(Res.string.record_voice)
-                                    else -> stringResource(Res.string.send_message)
-                                },
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
+                            contentDescription = when {
+                                isRecordingVoice -> stringResource(Res.string.stop_recording)
+                                shouldRecordVoice -> stringResource(Res.string.record_voice)
+                                else -> stringResource(Res.string.send_message)
+                            },
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
                 }
             }
@@ -3251,7 +3160,7 @@ private fun DeliveryStatus.label(): String {
     return when (this) {
         DeliveryStatus.Sending -> stringResource(Res.string.delivery_sending)
         DeliveryStatus.Sent -> stringResource(Res.string.delivery_sent)
-        DeliveryStatus.Read -> stringResource(Res.string.delivery_read)
+        DeliveryStatus.Failed -> stringResource(Res.string.delivery_failed)
     }
 }
 
@@ -3271,7 +3180,7 @@ private fun MessagePreview() {
                     body = "The changelog draft looks good.",
                     timestamp = "08:28",
                     isMine = false,
-                    deliveryStatus = DeliveryStatus.Read,
+                    deliveryStatus = DeliveryStatus.Sent,
                 ),
                 ChatMessage.User(
                     id = "2",
