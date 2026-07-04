@@ -1,7 +1,5 @@
 package org.debs.kalog.core.preferences
 
-import kotlinx.coroutines.flow.Flow
-
 interface SecureKeyValueStorage {
     suspend fun getStringOrNull(key: String): String?
 

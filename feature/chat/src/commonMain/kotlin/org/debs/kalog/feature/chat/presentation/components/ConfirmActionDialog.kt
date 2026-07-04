@@ -5,6 +5,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun ConfirmActionDialog(
@@ -34,7 +37,7 @@ fun ConfirmActionDialog(
                 enabled = !isProcessing,
                 onClick = onDismiss,
             ) {
-                Text("Cancel")
+                Text(stringResource(Res.string.cancel))
             }
         },
         confirmButton = {
@@ -45,5 +48,7 @@ fun ConfirmActionDialog(
                 Text(confirmLabel)
             }
         },
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surface,
     )
 }

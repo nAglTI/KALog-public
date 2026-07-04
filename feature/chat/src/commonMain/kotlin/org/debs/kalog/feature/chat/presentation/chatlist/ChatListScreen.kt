@@ -1,5 +1,6 @@
 package org.debs.kalog.feature.chat.presentation.chatlist
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,9 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,15 +38,20 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
 import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
+import org.debs.kalog.feature.chat.presentation.components.SavedMessagesAvatar
+import org.debs.kalog.feature.chat.presentation.text.asString
+import org.debs.kalog.feature.chat.presentation.text.rawText
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun ChatListScreen(
@@ -55,14 +64,7 @@ fun ChatListScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFFF4FAFF),
-                        MaterialTheme.colorScheme.background,
-                    ),
-                ),
-            ),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
             ChatListHeader(
@@ -108,10 +110,9 @@ fun ChatListScreen(
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary,
         ) {
-            Text(
-                text = "+",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
+            Icon(
+                imageVector = Icons.Outlined.Add,
+                contentDescription = stringResource(Res.string.create_chat),
             )
         }
     }
@@ -135,12 +136,26 @@ private fun ChatListHeader(
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        IconButton(onClick = onSettingsClick) {
-            Text(
-                text = "\u2699",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Surface(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(MaterialTheme.shapes.medium)
+                .clickable(onClick = onSettingsClick),
+            shape = MaterialTheme.shapes.medium,
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Settings,
+                    contentDescription = stringResource(Res.string.settings),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
     }
 }
@@ -154,10 +169,9 @@ private fun ChatListRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(28.dp),
-        color = Color.White.copy(alpha = 0.96f),
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(
             modifier = Modifier
@@ -166,10 +180,13 @@ private fun ChatListRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            AvatarBadge(
-                avatar = item.avatar,
-                modifier = Modifier.size(58.dp),
-            )
+            when (val avatar = item.avatar) {
+                is ChatListAvatarUiState.Initials -> AvatarBadge(
+                    avatar = avatar.avatar,
+                    modifier = Modifier.size(58.dp),
+                )
+                ChatListAvatarUiState.SavedMessages -> SavedMessagesAvatar(modifier = Modifier.size(58.dp))
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -183,12 +200,14 @@ private fun ChatListRow(
                         text = item.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Text(
-                    text = item.previewAuthor?.let { "$it: ${item.preview}" } ?: item.preview,
+                    text = item.previewAuthor?.let { "${it.asString()}: ${item.preview.asString()}" }
+                        ?: item.preview.asString(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -199,11 +218,24 @@ private fun ChatListRow(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    text = item.timestamp,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (item.isPinned) {
+                        Icon(
+                            imageVector = Icons.Outlined.PushPin,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Text(
+                        text = item.timestamp,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (item.unreadCount > 0) {
                     Box(
                         modifier = Modifier
@@ -232,17 +264,27 @@ private fun ChatListRow(
 private fun ChatListPreview() {
     ChatListScreen(
         state = ChatListUiState(
-            title = "KALog",
-            summary = "3 encrypted chats",
+            title = "Mayday Chat",
+            summary = rawText("Encrypted chats: 3"),
             items = listOf(
                 ChatListItemUiState(
                     id = "1",
-                    title = "Release channel",
-                    avatar = AvatarSpec("RC", AvatarAccent.Rose),
+                    title = "Release Channel",
+                    avatar = ChatListAvatarUiState.Initials(AvatarSpec("RC", AvatarAccent.Rose)),
                     timestamp = "08:28",
-                    preview = "The latest changelog draft is ready.",
-                    previewAuthor = "Anna",
+                    preview = rawText("The latest changelog draft is ready."),
+                    previewAuthor = rawText("Anna"),
                     unreadCount = 2,
+                ),
+                ChatListItemUiState(
+                    id = "self",
+                    title = "Saved Messages",
+                    avatar = ChatListAvatarUiState.SavedMessages,
+                    timestamp = "",
+                    preview = rawText("No messages yet"),
+                    previewAuthor = null,
+                    unreadCount = 0,
+                    isPinned = true,
                 ),
             ),
         ),

@@ -16,13 +16,14 @@ data class AvatarSpec(
 enum class ChatType {
     Personal,
     Group,
+    Self,
     Unknown,
 }
 
 enum class DeliveryStatus {
     Sending,
     Sent,
-    Read,
+    Failed,
 }
 
 enum class InvitationStatus {
@@ -30,6 +31,65 @@ enum class InvitationStatus {
     Pending,
     Accepted,
 }
+
+enum class ChatAttachmentKind {
+    File,
+    Image,
+    Video,
+    Audio,
+    Voice,
+}
+
+enum class ChatAttachmentLoadState {
+    NotStarted,
+    WaitingForTap,
+    CheckingCache,
+    Downloading,
+    Downloaded,
+    Decrypting,
+    Ready,
+    Failed,
+}
+
+data class ChatAttachment(
+    val id: String,
+    val kind: ChatAttachmentKind,
+    val name: String,
+    val mimeType: String? = null,
+    val sizeBytes: Long? = null,
+    val localUri: String? = null,
+    val contentBytes: ByteArray? = null,
+    val durationMillis: Long? = null,
+    val encryptionKeyId: String? = null,
+    val decryptionKey: String? = null,
+    val chunkSizeBytes: Long? = null,
+    val parts: List<ChatAttachmentPart> = emptyList(),
+    val loadState: ChatAttachmentLoadState = ChatAttachmentLoadState.NotStarted,
+) {
+    val uuid: String
+        get() = id
+}
+
+data class ChatAttachmentPart(
+    val id: String,
+    val index: Int,
+    val sizeBytes: Long? = null,
+    val key: String? = null,
+)
+
+data class ChatAttachmentEncryptionSpec(
+    val uuid: String,
+    val key: String,
+    val algorithm: String,
+    val sizeBits: Int,
+    val parts: List<ChatAttachmentPart> = emptyList(),
+    val chunkSizeBytes: Long? = null,
+)
+
+data class PreparedChatAttachment(
+    val attachment: ChatAttachment,
+    val encryption: ChatAttachmentEncryptionSpec,
+)
 
 sealed interface ChatMessage {
     val id: String
@@ -42,6 +102,7 @@ sealed interface ChatMessage {
         override val timestamp: String,
         val isMine: Boolean,
         val deliveryStatus: DeliveryStatus = DeliveryStatus.Sent,
+        val attachments: List<ChatAttachment> = emptyList(),
     ) : ChatMessage
 
     data class Service(

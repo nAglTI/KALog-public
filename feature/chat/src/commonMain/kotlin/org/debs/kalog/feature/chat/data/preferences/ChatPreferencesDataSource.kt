@@ -11,6 +11,12 @@ interface ChatPreferencesDataSource {
 
     suspend fun clearLastOpenedChatId()
 
+    suspend fun getLastPollTimestamp(): String?
+
+    suspend fun saveLastPollTimestamp(timestamp: String)
+
+    suspend fun clearLastPollTimestamp()
+
     fun observeNickname(): Flow<String>
 
     suspend fun getNickname(): String
@@ -30,4 +36,24 @@ interface ChatPreferencesDataSource {
     suspend fun isDebugModeEnabled(): Boolean
 
     suspend fun setDebugModeEnabled(enabled: Boolean)
+
+    suspend fun getMediaCacheRetentionDays(): Int
+
+    suspend fun saveMediaCacheRetentionDays(days: Int)
+
+    fun observeThemeMode(): Flow<AppThemeMode>
+
+    suspend fun getThemeMode(): AppThemeMode
+
+    suspend fun saveThemeMode(themeMode: AppThemeMode)
+
+    fun observeDesktopAutostartEnabled(): Flow<Boolean>
+
+    suspend fun isDesktopAutostartEnabled(): Boolean
+
+    suspend fun setDesktopAutostartEnabled(enabled: Boolean)
+
+    suspend fun isAccountOnboardingCompleted(): Boolean
+
+    suspend fun setAccountOnboardingCompleted(completed: Boolean)
 }

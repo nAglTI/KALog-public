@@ -3,6 +3,8 @@ package org.debs.kalog.feature.chat.data.remote
 import org.debs.kalog.feature.chat.data.remote.api.ChatApiService
 import org.debs.kalog.feature.chat.data.remote.api.CreateDirectChatRequestDto
 import org.debs.kalog.feature.chat.data.remote.api.CreateGroupChatRequestDto
+import org.debs.kalog.feature.chat.data.remote.api.CreateSelfChatRequestDto
+import org.debs.kalog.feature.chat.data.remote.api.CreateSelfChatResultDto
 import org.debs.kalog.feature.chat.data.remote.api.InviteUserToChatRequestDto
 import org.debs.kalog.feature.chat.data.remote.api.LeaveGroupChatRequestDto
 import org.debs.kalog.feature.chat.data.remote.api.SendDataDto
@@ -29,6 +31,8 @@ interface ChatRemoteDataSource {
 
     suspend fun createGroupChat(publicKey: String): RemoteChatCreated
 
+    suspend fun createSelfChat(publicKey: String): RemoteCreateSelfChatResult = error("Self chat is not implemented.")
+
     suspend fun inviteUserToChat(chatId: String, userId: String)
 
     suspend fun leaveGroupChat(chatId: String)
@@ -36,6 +40,18 @@ interface ChatRemoteDataSource {
     suspend fun leaveChat(chatId: String)
 
     suspend fun setGroupChatPublicKey(chatId: String, publicKey: String)
+
+    suspend fun initAttachmentUpload(): RemoteAttachmentUploadReservation
+
+    suspend fun uploadAttachment(
+        attachmentId: String,
+        uploadToken: String,
+        bytes: ByteArray,
+        contentType: String? = null,
+        onProgress: (bytesSent: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    )
+
+    suspend fun downloadAttachment(attachmentId: String, rangeHeader: String? = null): ByteArray
 }
 
 class KtorChatRemoteDataSource(
@@ -169,6 +185,13 @@ class KtorChatRemoteDataSource(
         return response.toRemote()
     }
 
+    override suspend fun createSelfChat(publicKey: String): RemoteCreateSelfChatResult {
+        return when (val response = chatApiService.createSelfChat(CreateSelfChatRequestDto(publicKey = publicKey))) {
+            is CreateSelfChatResultDto.Created -> RemoteCreateSelfChatResult.Created(response.chat.toRemote())
+            CreateSelfChatResultDto.AlreadyExists -> RemoteCreateSelfChatResult.AlreadyExists
+        }
+    }
+
     override suspend fun inviteUserToChat(chatId: String, userId: String) {
         chatApiService.inviteUserToChat(
             InviteUserToChatRequestDto(
@@ -179,9 +202,7 @@ class KtorChatRemoteDataSource(
     }
 
     override suspend fun leaveGroupChat(chatId: String) {
-        chatApiService.leaveGroupChat(
-            LeaveGroupChatRequestDto(chatId = chatId),
-        )
+        leaveChat(chatId)
     }
 
     override suspend fun leaveChat(chatId: String) {
@@ -196,6 +217,37 @@ class KtorChatRemoteDataSource(
                 chatId = chatId,
                 publicKey = publicKey,
             ),
+        )
+    }
+
+    override suspend fun initAttachmentUpload(): RemoteAttachmentUploadReservation {
+        val response = chatApiService.initAttachmentUpload()
+        return RemoteAttachmentUploadReservation(
+            attachmentId = response.attachmentId,
+            uploadToken = response.uploadToken,
+        )
+    }
+
+    override suspend fun uploadAttachment(
+        attachmentId: String,
+        uploadToken: String,
+        bytes: ByteArray,
+        contentType: String?,
+        onProgress: (bytesSent: Long, totalBytes: Long) -> Unit,
+    ) {
+        chatApiService.uploadAttachment(
+            attachmentId = attachmentId,
+            uploadToken = uploadToken,
+            bytes = bytes,
+            contentType = contentType,
+            onProgress = onProgress,
+        )
+    }
+
+    override suspend fun downloadAttachment(attachmentId: String, rangeHeader: String?): ByteArray {
+        return chatApiService.downloadAttachment(
+            attachmentId = attachmentId,
+            rangeHeader = rangeHeader,
         )
     }
 }

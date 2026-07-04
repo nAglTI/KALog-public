@@ -9,7 +9,7 @@ internal data class ServiceMessageData(
 )
 
 @Serializable
-internal data class UserJoinedServiceData(
+internal data class NicknameProvidedServiceData(
     @SerialName("userID") val userID: String,
     @SerialName("nickname") val nickname: String,
 )

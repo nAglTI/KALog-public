@@ -1,0 +1,4 @@
+<resources>
+    <string name="device_lock_required">Нужна блокировка устройства</string>
+    <string name="device_lock_required_description">Mayday Chat может открыться, но создание аккаунта, импорт резервных копий, регистрация UUID и генерация ключей отключены, пока вы не настроите системный PIN-код, пароль или биометрическую блокировку.</string>
+</resources>

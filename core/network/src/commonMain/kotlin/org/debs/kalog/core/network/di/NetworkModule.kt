@@ -4,7 +4,7 @@ import kotlinx.serialization.json.Json
 import org.debs.kalog.core.network.client.KtorSecureApiClient
 import org.debs.kalog.core.network.client.SecureApiClient
 import org.debs.kalog.core.network.client.SecureHttpClientFactory
-import org.debs.kalog.core.network.config.NetworkConfig
+import org.debs.kalog.core.network.config.configuredNetworkEnvironment
 import org.debs.kalog.core.network.security.CipherNetworkSecurityProvider
 import org.debs.kalog.core.network.security.NetworkSecurityProvider
 import org.debs.kalog.core.network.security.NoOpTransportKeyProvider
@@ -17,7 +17,7 @@ val networkModule = module {
             explicitNulls = false
         }
     }
-    single { NetworkConfig() }
+    single { configuredNetworkEnvironment() }
     single { NoOpTransportKeyProvider() }
     single<NetworkSecurityProvider> { CipherNetworkSecurityProvider(get(), getOrNull() ?: get<NoOpTransportKeyProvider>()) }
     single { SecureHttpClientFactory(get(), get(), get()) }

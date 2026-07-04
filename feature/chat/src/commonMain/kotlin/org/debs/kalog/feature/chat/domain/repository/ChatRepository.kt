@@ -1,8 +1,10 @@
 package org.debs.kalog.feature.chat.domain.repository
 
 import kotlinx.coroutines.flow.Flow
+import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatParticipant
 import org.debs.kalog.feature.chat.domain.model.ChatThread
+import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
 
 interface ChatRepository {
     suspend fun startSession()
@@ -13,6 +15,10 @@ interface ChatRepository {
 
     suspend fun clearAllData()
 
+    suspend fun clearCachedAttachments(): Int
+
+    suspend fun clearCachedAttachmentsOlderThan(ageMillis: Long): Int
+
     fun observeChats(): Flow<List<ChatThread>>
 
     fun observeChat(chatId: String): Flow<ChatThread?>
@@ -21,13 +27,29 @@ interface ChatRepository {
 
     suspend fun openChat(chatId: String)
 
+    suspend fun refreshChatMessages(chatId: String): Boolean = false
+
     suspend fun loadMoreMessages(chatId: String): Boolean
 
-    suspend fun sendMessage(chatId: String, plainText: String)
+    suspend fun sendMessage(
+        chatId: String,
+        plainText: String,
+        attachments: List<PreparedChatAttachment> = emptyList(),
+    )
+
+    suspend fun prepareAttachment(
+        chatId: String,
+        attachment: ChatAttachment,
+        onUploadProgress: (bytesSent: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): PreparedChatAttachment
+
+    suspend fun requestAttachmentDownload(chatId: String, attachmentId: String)
 
     suspend fun createDirectChat(targetUserId: String): String
 
     suspend fun createGroupChat(publicKey: String? = null): String
+
+    suspend fun ensureSelfChat(): String = error("Self chat is not implemented.")
 
     suspend fun inviteUserToChat(chatId: String, userId: String)
 

@@ -18,6 +18,9 @@ kotlin {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
+        androidResources {
+            enable = true
+        }
     }
     jvm()
     if (isAppleHost) {
@@ -26,6 +29,12 @@ kotlin {
     }
 
     sourceSets {
+        androidMain.dependencies {
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.core.ktx)
+            implementation(libs.media3.exoplayer)
+            implementation(libs.media3.ui)
+        }
         commonMain.dependencies {
             implementation(projects.core.crypto)
             implementation(projects.core.network)
@@ -36,6 +45,7 @@ kotlin {
             implementation(libs.compose.foundation)
             implementation(libs.compose.material.icons.extended)
             implementation(libs.compose.material3)
+            implementation(libs.compose.components.resources)
             implementation(libs.compose.runtime)
             implementation(libs.compose.ui)
             implementation(libs.compose.ui.backhandler)
@@ -55,6 +65,13 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.mock)
             implementation(libs.ktor.serialization.kotlinx.json)
+        }
+        jvmMain.dependencies {
+            implementation(libs.jna.platform)
+            implementation("org.openjfx:javafx-base:21.0.5:win")
+            implementation("org.openjfx:javafx-graphics:21.0.5:win")
+            implementation("org.openjfx:javafx-media:21.0.5:win")
+            implementation("org.openjfx:javafx-swing:21.0.5:win")
         }
     }
 }

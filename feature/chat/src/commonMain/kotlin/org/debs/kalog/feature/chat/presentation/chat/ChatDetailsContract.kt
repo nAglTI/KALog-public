@@ -2,9 +2,12 @@ package org.debs.kalog.feature.chat.presentation.chat
 
 import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
+import org.debs.kalog.feature.chat.domain.model.ChatAttachment
 import org.debs.kalog.feature.chat.domain.model.ChatMessage
 import org.debs.kalog.feature.chat.domain.model.ChatType
 import org.debs.kalog.feature.chat.domain.model.InvitationStatus
+import org.debs.kalog.feature.chat.domain.model.PreparedChatAttachment
+import org.debs.kalog.feature.chat.presentation.text.UiText
 
 data class ChatDetailsUiState(
     val title: String = "",
@@ -13,7 +16,10 @@ data class ChatDetailsUiState(
     val avatar: AvatarSpec = AvatarSpec(initials = "--", accent = AvatarAccent.Sky),
     val messages: List<ChatMessage> = emptyList(),
     val draft: String = "",
+    val pendingAttachments: List<PreparedChatAttachment> = emptyList(),
+    val attachmentUploadProgress: AttachmentUploadProgress? = null,
     val isSendingMessage: Boolean = false,
+    val isPreparingAttachment: Boolean = false,
     val isInvitingUser: Boolean = false,
     val hasMoreMessages: Boolean = false,
     val isLoadingMoreMessages: Boolean = false,
@@ -21,7 +27,9 @@ data class ChatDetailsUiState(
     val isProcessingInvitation: Boolean = false,
 ) {
     val canSend: Boolean
-        get() = draft.isNotBlank() && !isSendingMessage && invitationStatus != InvitationStatus.Pending
+        get() = (draft.isNotBlank() || pendingAttachments.isNotEmpty()) &&
+            !isPreparingAttachment &&
+            invitationStatus != InvitationStatus.Pending
 
     val canInviteUsers: Boolean
         get() = type == ChatType.Group && invitationStatus != InvitationStatus.Pending
@@ -30,10 +38,30 @@ data class ChatDetailsUiState(
         get() = invitationStatus == InvitationStatus.Pending
 }
 
+data class AttachmentUploadProgress(
+    val fileName: String,
+    val bytesSent: Long,
+    val totalBytes: Long,
+)
+
 sealed interface ChatDetailsEvent {
     data class DraftChanged(val value: String) : ChatDetailsEvent
 
     data object SendClicked : ChatDetailsEvent
+
+    data object AttachFileClicked : ChatDetailsEvent
+
+    data object PickImageClicked : ChatDetailsEvent
+
+    data object RecordVoiceClicked : ChatDetailsEvent
+
+    data class AttachmentDraftSelected(val attachment: ChatAttachment) : ChatDetailsEvent
+
+    data class AttachmentDraftsSelected(val attachments: List<ChatAttachment>) : ChatDetailsEvent
+
+    data class RemoveAttachmentDraft(val attachmentId: String) : ChatDetailsEvent
+
+    data class AttachmentDownloadClicked(val attachmentId: String) : ChatDetailsEvent
 
     data object LoadMoreMessagesClicked : ChatDetailsEvent
 
@@ -48,4 +76,8 @@ sealed interface ChatDetailsEffect {
     data object InviteUserCompleted : ChatDetailsEffect
 
     data object InvitationDeclined : ChatDetailsEffect
+
+    data class ShowError(val message: UiText) : ChatDetailsEffect
+
+    data class ShowMessage(val message: UiText) : ChatDetailsEffect
 }

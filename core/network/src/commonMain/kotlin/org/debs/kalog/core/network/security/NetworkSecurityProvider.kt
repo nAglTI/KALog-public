@@ -1,12 +1,19 @@
 package org.debs.kalog.core.network.security
 
+import kotlin.coroutines.cancellation.CancellationException
 import org.debs.kalog.core.crypto.EncryptionService
 import org.debs.kalog.core.network.model.SecurePayload
 
 interface NetworkSecurityProvider {
     suspend fun protectRequest(body: String): SecurePayload
 
-    suspend fun unprotectResponse(payload: SecurePayload): String
+    suspend fun unprotectResponse(payload: SecurePayload): NetworkDecryptionResult
+}
+
+sealed interface NetworkDecryptionResult {
+    data class Decrypted(val body: String) : NetworkDecryptionResult
+
+    data object Undecryptable : NetworkDecryptionResult
 }
 
 class CipherNetworkSecurityProvider(
@@ -14,23 +21,46 @@ class CipherNetworkSecurityProvider(
     private val transportKeyProvider: TransportKeyProvider,
 ) : NetworkSecurityProvider {
     override suspend fun protectRequest(body: String): SecurePayload {
-        // FIXME: Do not silently fall back to plaintext in production when transport keys are missing.
-        val publicKey = transportKeyProvider.serverPublicKey() ?: return SecurePayload(body = body, isEncrypted = false)
-        return runCatching { encryptionService.encryptToChunks(body, publicKey) }
-            .fold(
-                onSuccess = { SecurePayload(chunks = it, isEncrypted = true) },
-                // FIXME: Encryption failures should fail closed instead of sending the original request body.
-                onFailure = { SecurePayload(body = body, isEncrypted = false) },
-            )
+        val publicKey = transportKeyProvider.serverPublicKey()
+            ?: throw TransportEncryptionException("Server public key is not initialized.")
+
+        val encryptedChunks = try {
+            encryptionService.encryptToChunks(body, publicKey)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw TransportEncryptionException("Failed to encrypt request body.", error)
+        }
+
+        if (encryptedChunks.isEmpty()) {
+            throw TransportEncryptionException("Encrypted request body is empty.")
+        }
+
+        return SecurePayload(chunks = encryptedChunks, isEncrypted = true)
     }
 
-    override suspend fun unprotectResponse(payload: SecurePayload): String {
-        if (!payload.isEncrypted) return payload.body.orEmpty()
+    override suspend fun unprotectResponse(payload: SecurePayload): NetworkDecryptionResult {
+        if (!payload.isEncrypted) {
+            return NetworkDecryptionResult.Decrypted(payload.body.orEmpty())
+        }
 
-        // FIXME: Treat missing private keys as a hard failure for protected responses in production builds.
-        val privateKey = transportKeyProvider.clientPrivateKey() ?: return payload.body.orEmpty()
-        return runCatching { encryptionService.decryptFromChunks(payload.chunks, privateKey) }
-            // FIXME: Decryption failures should not silently fall back to the raw response body.
-            .getOrElse { payload.body.orEmpty() }
+        val privateKeyRef = transportKeyProvider.clientPrivateKeyRef()
+            ?: return NetworkDecryptionResult.Undecryptable
+        if (payload.chunks.isEmpty()) {
+            return NetworkDecryptionResult.Decrypted("")
+        }
+
+        return try {
+            NetworkDecryptionResult.Decrypted(encryptionService.decryptFromChunks(payload.chunks, privateKeyRef))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            NetworkDecryptionResult.Undecryptable
+        }
     }
 }
+
+class TransportEncryptionException(
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)

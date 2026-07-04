@@ -1,9 +1,14 @@
 package org.debs.kalog.feature.chat.di
 
+import org.debs.kalog.feature.chat.data.account.AccountBackupManager
+import org.debs.kalog.feature.chat.data.account.AccountBackupFileManager
+import org.debs.kalog.feature.chat.data.account.createAccountBackupFileManager
 import org.debs.kalog.feature.chat.data.crypto.ChatKeyStore
 import org.debs.kalog.feature.chat.data.crypto.ChatMessageCipher
 import org.debs.kalog.feature.chat.data.crypto.ChatTransportKeyProvider
 import org.debs.kalog.feature.chat.data.crypto.SettingsChatKeyStore
+import org.debs.kalog.feature.chat.data.cache.ChatAttachmentFileCache
+import org.debs.kalog.feature.chat.data.cache.createChatAttachmentFileCache
 import org.debs.kalog.feature.chat.data.local.ChatLocalDataSource
 import org.debs.kalog.feature.chat.data.local.InMemoryChatLocalDataSource
 import org.debs.kalog.feature.chat.data.preferences.ChatPreferencesDataSource
@@ -15,12 +20,15 @@ import org.debs.kalog.feature.chat.data.repository.OfflineFirstChatRepository
 import org.debs.kalog.feature.chat.domain.repository.ChatRepository
 import org.debs.kalog.feature.chat.domain.usecase.AcceptChatInvitationUseCase
 import org.debs.kalog.feature.chat.domain.usecase.BroadcastNicknameUseCase
+import org.debs.kalog.feature.chat.domain.usecase.ClearCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CreateDirectChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CreateGroupChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetChatParticipantsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ClearAllChatDataUseCase
 import org.debs.kalog.feature.chat.domain.usecase.CloseChatUseCase
+import org.debs.kalog.feature.chat.domain.usecase.ClearOldCachedChatAttachmentsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.DeclineChatInvitationUseCase
+import org.debs.kalog.feature.chat.domain.usecase.EnsureSelfChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.GetCurrentUserIdUseCase
 import org.debs.kalog.feature.chat.domain.usecase.InviteUserToChatUseCase
 import org.debs.kalog.feature.chat.domain.usecase.LeaveGroupChatUseCase
@@ -28,6 +36,9 @@ import org.debs.kalog.feature.chat.domain.usecase.LoadMoreChatMessagesUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatDetailsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.ObserveChatsUseCase
 import org.debs.kalog.feature.chat.domain.usecase.OpenChatUseCase
+import org.debs.kalog.feature.chat.domain.usecase.PrepareChatAttachmentUseCase
+import org.debs.kalog.feature.chat.domain.usecase.RefreshChatMessagesUseCase
+import org.debs.kalog.feature.chat.domain.usecase.RequestChatAttachmentDownloadUseCase
 import org.debs.kalog.feature.chat.domain.usecase.RunChatSyncLoopUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SendChatMessageUseCase
 import org.debs.kalog.feature.chat.domain.usecase.SetGroupChatPublicKeyUseCase
@@ -35,26 +46,36 @@ import org.debs.kalog.feature.chat.domain.usecase.StartChatSessionUseCase
 import org.debs.kalog.feature.chat.presentation.chat.ChatDetailsViewModel
 import org.debs.kalog.feature.chat.presentation.chatinfo.ChatInfoViewModel
 import org.debs.kalog.feature.chat.presentation.chatlist.ChatListViewModel
+import org.debs.kalog.feature.chat.presentation.onboarding.AccountOnboardingViewModel
+import org.debs.kalog.feature.chat.presentation.platform.DesktopAutostartManager
+import org.debs.kalog.feature.chat.presentation.platform.createDesktopAutostartManager
 import org.debs.kalog.feature.chat.presentation.session.ChatSessionViewModel
 import org.debs.kalog.feature.chat.presentation.settings.SettingsViewModel
 import org.debs.kalog.core.network.security.TransportKeyProvider
 import org.koin.dsl.module
 
 val chatFeatureModule = module {
-    single<ChatPreferencesDataSource> { SettingsChatPreferencesDataSource(get()) }
+    single<ChatPreferencesDataSource> { SettingsChatPreferencesDataSource(get(), get()) }
+    single<AccountBackupFileManager> { createAccountBackupFileManager() }
+    single { AccountBackupManager(get(), get(), get(), get(), get(), get(), get()) }
+    single<DesktopAutostartManager> { createDesktopAutostartManager() }
     single<ChatKeyStore> { SettingsChatKeyStore(get(), get(), get()) }
     single<TransportKeyProvider> { ChatTransportKeyProvider(get()) }
     single { ChatMessageCipher(get(), get()) }
     single<ChatLocalDataSource> { InMemoryChatLocalDataSource() }
+    single<ChatAttachmentFileCache> { createChatAttachmentFileCache() }
     single { ChatApiService(get(), get(), get()) }
     single<ChatRemoteDataSource> { KtorChatRemoteDataSource(get()) }
-    single<ChatRepository> { OfflineFirstChatRepository(get(), get(), get(), get(), get(), get(), get()) }
+    single<ChatRepository> { OfflineFirstChatRepository(get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { AcceptChatInvitationUseCase(get()) }
     factory { BroadcastNicknameUseCase(get()) }
+    factory { ClearCachedChatAttachmentsUseCase(get()) }
     factory { ClearAllChatDataUseCase(get()) }
+    factory { ClearOldCachedChatAttachmentsUseCase(get()) }
     factory { CloseChatUseCase(get()) }
     factory { CreateDirectChatUseCase(get()) }
     factory { CreateGroupChatUseCase(get()) }
+    factory { EnsureSelfChatUseCase(get()) }
     factory { GetChatParticipantsUseCase(get()) }
     factory { DeclineChatInvitationUseCase(get()) }
     factory { GetCurrentUserIdUseCase(get()) }
@@ -66,11 +87,15 @@ val chatFeatureModule = module {
     factory { ObserveChatsUseCase(get()) }
     factory { ObserveChatDetailsUseCase(get()) }
     factory { OpenChatUseCase(get()) }
+    factory { PrepareChatAttachmentUseCase(get()) }
+    factory { RefreshChatMessagesUseCase(get()) }
+    factory { RequestChatAttachmentDownloadUseCase(get()) }
     factory { SendChatMessageUseCase(get()) }
     factory { SetGroupChatPublicKeyUseCase(get()) }
     factory { ChatSessionViewModel(get()) }
-    factory { ChatListViewModel(get(), get(), get(), get()) }
-    factory { SettingsViewModel(get(), get(), get(), get()) }
-    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get()) }
+    factory { AccountOnboardingViewModel(get(), get(), get(), get(), get(), get()) }
+    factory { ChatListViewModel(get(), get(), get(), get(), get()) }
+    factory { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
+    factory { (chatId: String) -> ChatDetailsViewModel(chatId, get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     factory { (chatId: String) -> ChatInfoViewModel(chatId, get(), get(), get(), get()) }
 }

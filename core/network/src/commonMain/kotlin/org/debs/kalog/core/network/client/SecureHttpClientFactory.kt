@@ -6,11 +6,11 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
-import org.debs.kalog.core.network.config.NetworkConfig
+import org.debs.kalog.core.network.config.NetworkEnvironment
 
 class SecureHttpClientFactory(
     private val platformHttpClientFactory: PlatformHttpClientFactory,
-    private val networkConfig: NetworkConfig,
+    private val networkEnvironment: NetworkEnvironment,
     private val json: Json,
 ) {
     fun create(): HttpClient {
@@ -22,9 +22,9 @@ class SecureHttpClientFactory(
             }
             install(WebSockets)
             install(HttpTimeout) {
-                connectTimeoutMillis = networkConfig.connectTimeoutMillis
-                requestTimeoutMillis = networkConfig.requestTimeoutMillis
-                socketTimeoutMillis = networkConfig.socketTimeoutMillis
+                connectTimeoutMillis = networkEnvironment.connectTimeoutMillis
+                requestTimeoutMillis = networkEnvironment.requestTimeoutMillis
+                socketTimeoutMillis = networkEnvironment.socketTimeoutMillis
             }
         }
     }

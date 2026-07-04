@@ -1,7 +1,9 @@
 package org.debs.kalog.feature.chat.presentation.chatinfo
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,11 +18,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -34,16 +36,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
 import org.debs.kalog.feature.chat.domain.model.AvatarAccent
 import org.debs.kalog.feature.chat.domain.model.AvatarSpec
 import org.debs.kalog.feature.chat.domain.model.ChatType
 import org.debs.kalog.feature.chat.presentation.components.AvatarBadge
+import org.debs.kalog.feature.chat.presentation.components.SavedMessagesAvatar
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun ChatInfoScreen(
@@ -65,14 +76,7 @@ fun ChatInfoScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFFEAF4FB),
-                            Color(0xFFF8FBFF),
-                        ),
-                    ),
-                ),
+                .background(MaterialTheme.colorScheme.background),
         ) {
             item(key = "avatar-header") {
                 ChatInfoAvatarSection(
@@ -84,7 +88,7 @@ fun ChatInfoScreen(
             if (state.participants.isNotEmpty()) {
                 item(key = "participants-header") {
                     Text(
-                        text = "Members (${state.participants.size})",
+                        text = stringResource(Res.string.participants_count, state.participants.size),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -116,8 +120,8 @@ private fun ChatInfoHeader(
     onBack: () -> Unit,
 ) {
     Surface(
-        color = Color.White.copy(alpha = 0.96f),
-        shadowElevation = 10.dp,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
             modifier = Modifier
@@ -127,23 +131,32 @@ private fun ChatInfoHeader(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
+            Surface(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .size(36.dp)
+                    .clip(MaterialTheme.shapes.medium)
                     .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
+                shape = MaterialTheme.shapes.medium,
+                color = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
-                    contentDescription = null,
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBackIos,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
             Text(
-                text = "Chat info",
+                text = stringResource(Res.string.chat_info),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
             )
         }
     }
@@ -163,17 +176,21 @@ private fun ChatInfoAvatarSection(
             .padding(vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AvatarBadge(
-            avatar = state.avatar,
-            modifier = Modifier.size(80.dp),
-        )
+        if (state.type == ChatType.Self) {
+            SavedMessagesAvatar(modifier = Modifier.size(80.dp))
+        } else {
+            AvatarBadge(
+                avatar = state.avatar,
+                modifier = Modifier.size(80.dp),
+            )
+        }
         Spacer(modifier = Modifier.height(16.dp))
 
         if (isEditing && state.type == ChatType.Group) {
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color.White,
-                shadowElevation = 4.dp,
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 BasicTextField(
                     value = editingTitle,
@@ -189,7 +206,7 @@ private fun ChatInfoAvatarSection(
                     decorationBox = { innerTextField ->
                         if (editingTitle.isBlank()) {
                             Text(
-                                text = "Chat name",
+                                text = stringResource(Res.string.chat_title),
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -204,16 +221,17 @@ private fun ChatInfoAvatarSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .clickable {
                             isEditing = false
                             editingTitle = state.title
                         },
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 ) {
                     Text(
-                        text = "Cancel",
+                        text = stringResource(Res.string.cancel),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -221,18 +239,18 @@ private fun ChatInfoAvatarSection(
                 }
                 Surface(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .clickable {
                             if (editingTitle.isNotBlank()) {
                                 onTitleChanged(editingTitle)
                             }
                             isEditing = false
                         },
-                    shape = RoundedCornerShape(18.dp),
+                    shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.primary,
                 ) {
                     Text(
-                        text = "Save",
+                        text = stringResource(Res.string.save),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -242,9 +260,12 @@ private fun ChatInfoAvatarSection(
             }
         } else {
             Text(
-                text = state.title.ifBlank { "Unnamed chat" },
+                text = state.title.ifBlank {
+                    stringResource(Res.string.untitled_chat)
+                },
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -260,16 +281,20 @@ private fun ChatInfoAvatarSection(
             )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = when (state.type) {
-                ChatType.Group -> "Group chat"
-                ChatType.Personal -> "Personal chat"
-                ChatType.Unknown -> ""
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        val typeLabel = when (state.type) {
+            ChatType.Group -> stringResource(Res.string.group_chat)
+            ChatType.Self -> ""
+            ChatType.Personal -> stringResource(Res.string.personal_chat)
+            ChatType.Unknown -> ""
+        }
+        if (typeLabel.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = typeLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -279,6 +304,9 @@ private fun ParticipantRow(
     onClick: () -> Unit,
     isClickable: Boolean,
 ) {
+    val clipboardManager = LocalClipboardManager.current
+    val canCopyUserId = !participant.isCurrentUser
+    var isParticipantMenuVisible by remember { mutableStateOf(false) }
     val initials = participant.displayName
         .split(" ")
         .filter { it.isNotBlank() }
@@ -291,44 +319,97 @@ private fun ParticipantRow(
         accents[(hash % accents.size).toInt()]
     }
 
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (isClickable) Modifier.clickable(onClick = onClick)
-                else Modifier
-            ),
-        color = Color.Transparent,
-    ) {
-        Row(
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AvatarBadge(
-                avatar = AvatarSpec(initials = initials, accent = accent),
-                modifier = Modifier.size(44.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (participant.isCurrentUser) {
-                        "${participant.displayName} (you)"
+                .then(
+                    if (isClickable || canCopyUserId) {
+                        Modifier
+                            .participantContextMenuGestures(
+                                enabled = canCopyUserId,
+                                onOpen = { isParticipantMenuVisible = true },
+                            )
+                            .combinedClickable(
+                                onClick = {
+                                    if (isClickable) {
+                                        onClick()
+                                    }
+                                },
+                                onLongClick = {
+                                    if (canCopyUserId) {
+                                        isParticipantMenuVisible = true
+                                    }
+                                },
+                                onLongClickLabel = stringResource(Res.string.copy_uuid),
+                            )
                     } else {
-                        participant.displayName
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                        Modifier
+                    }
+                ),
+            color = Color.Transparent,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AvatarBadge(
+                    avatar = AvatarSpec(initials = initials, accent = accent),
+                    modifier = Modifier.size(44.dp),
                 )
-                if (!participant.isCurrentUser) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Send message",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        text = if (participant.isCurrentUser) {
+                            "${participant.displayName} (${stringResource(Res.string.you_lowercase)})"
+                        } else {
+                            participant.displayName
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    if (!participant.isCurrentUser) {
+                        Text(
+                            text = stringResource(Res.string.message),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+        DropdownMenu(
+            expanded = isParticipantMenuVisible,
+            onDismissRequest = { isParticipantMenuVisible = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(Res.string.copy_uuid)) },
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(participant.userId))
+                    isParticipantMenuVisible = false
+                },
+            )
+        }
+    }
+}
+
+private fun Modifier.participantContextMenuGestures(
+    enabled: Boolean,
+    onOpen: () -> Unit,
+): Modifier {
+    if (!enabled) return this
+
+    return pointerInput(onOpen) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
+                    onOpen()
                 }
             }
         }

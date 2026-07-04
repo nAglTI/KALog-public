@@ -1,3 +1,8 @@
 <resources>
-    <string name="app_name">KALog</string>
+    <string name="app_name">Mayday Chat</string>
+    <string name="app_lock_title">Unlock Mayday Chat</string>
+    <string name="app_lock_subtitle">Use fingerprint, face, PIN, pattern, or password.</string>
+    <string name="app_lock_unavailable_message">Set up a secure screen lock to open Mayday Chat.</string>
+    <string name="reduced_protection_title">Device lock is disabled</string>
+    <string name="reduced_protection_message">Mayday Chat opened without system authentication because this device has no secure screen lock. Account access, backup import, UUID registration, and key generation are disabled until you set up a PIN, pattern, password, or biometric unlock in system settings.</string>
 </resources>

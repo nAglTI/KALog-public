@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Monochrome layer for Android 13+ themed icons. Solid white on transparent;
+  the system tints it at runtime with the user's theme color. Decorative
+  beams and tonal banding are dropped — only structural mesh + node
+  silhouettes remain.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="432"
+    android:viewportHeight="432">
+
+    <group
+        android:translateX="96"
+        android:translateY="101">
+
+        <!-- mesh edges -->
+        <path
+            android:pathData="M120,44 L44,96 M120,44 L196,96 M120,44 L120,142 M44,96 L120,142 M196,96 L120,142 M44,96 L44,192 M196,96 L196,192 M120,142 L44,192 M120,142 L196,192"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="3"
+            android:strokeLineCap="round" />
+
+        <!-- packets (filled squares) -->
+        <path
+            android:pathData="M115.5,88.5 h9 v9 h-9 z M77.5,114.5 h9 v9 h-9 z M153.5,114.5 h9 v9 h-9 z"
+            android:fillColor="#FFFFFFFF" />
+
+        <!-- top peer -->
+        <path
+            android:pathData="M120,44 m-18,0 a18,18 0 1,0 36,0 a18,18 0 1,0 -36,0 Z"
+            android:fillColor="#FFFFFFFF" />
+
+        <!-- left peer -->
+        <path
+            android:pathData="M44,96 m-18,0 a18,18 0 1,0 36,0 a18,18 0 1,0 -36,0 Z"
+            android:fillColor="#FFFFFFFF" />
+
+        <!-- right peer -->
+        <path
+            android:pathData="M196,96 m-18,0 a18,18 0 1,0 36,0 a18,18 0 1,0 -36,0 Z"
+            android:fillColor="#FFFFFFFF" />
+
+        <!-- central hub: outer ring + filled inner disc -->
+        <path
+            android:pathData="M120,142 m-28,0 a28,28 0 1,0 56,0 a28,28 0 1,0 -56,0 Z"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="4" />
+        <path
+            android:pathData="M120,142 m-14,0 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0 Z"
+            android:fillColor="#FFFFFFFF" />
+
+        <!-- bottom small peers -->
+        <path
+            android:pathData="M44,192 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0 Z"
+            android:fillColor="#FFFFFFFF" />
+        <path
+            android:pathData="M196,192 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0 Z"
+            android:fillColor="#FFFFFFFF" />
+
+    </group>
+</vector>

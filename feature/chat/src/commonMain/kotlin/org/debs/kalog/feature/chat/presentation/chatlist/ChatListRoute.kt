@@ -7,9 +7,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
+import mayday_chat.feature.chat.generated.resources.Res
+import mayday_chat.feature.chat.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 import org.debs.kalog.feature.chat.presentation.components.ChatTypeSelectionDialog
 import org.debs.kalog.feature.chat.presentation.components.UuidInputDialog
+import org.debs.kalog.feature.chat.presentation.koinLifecycleViewModel
 
 @Composable
 fun ChatListRoute(
@@ -53,9 +56,9 @@ fun ChatListRoute(
 
     if (isCreatePersonalChatDialogVisible) {
         UuidInputDialog(
-            title = "Create personal chat",
+            title = stringResource(Res.string.create_personal_chat),
             value = targetUserUuid,
-            confirmLabel = "Create chat",
+            confirmLabel = stringResource(Res.string.create_chat),
             onValueChange = { targetUserUuid = it },
             onDismiss = {
                 isCreatePersonalChatDialogVisible = false

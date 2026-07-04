@@ -68,31 +68,36 @@ class ChatInfoViewModel(
                         avatar = chat.avatar,
                     )
                 }
+                refreshParticipants()
             }
         }
     }
 
     private fun loadParticipants() {
         viewModelScope.launch {
-            try {
-                val participants = getChatParticipantsUseCase(chatId)
-                _state.update { current ->
-                    current.copy(
-                        participants = participants.map { participant ->
-                            ParticipantUiModel(
-                                userId = participant.userId,
-                                displayName = participant.displayName,
-                                isCurrentUser = participant.isCurrentUser,
-                            )
-                        },
-                        isLoading = false,
-                    )
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                _state.update { it.copy(isLoading = false) }
+            refreshParticipants()
+        }
+    }
+
+    private suspend fun refreshParticipants() {
+        try {
+            val participants = getChatParticipantsUseCase(chatId)
+            _state.update { current ->
+                current.copy(
+                    participants = participants.map { participant ->
+                        ParticipantUiModel(
+                            userId = participant.userId,
+                            displayName = participant.displayName,
+                            isCurrentUser = participant.isCurrentUser,
+                        )
+                    },
+                    isLoading = false,
+                )
             }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            _state.update { it.copy(isLoading = false) }
         }
     }
 
