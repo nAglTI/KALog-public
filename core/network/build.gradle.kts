@@ -17,9 +17,6 @@ fun localNetworkProperty(key: String): String? {
 val networkBaseUrl = localNetworkProperty("kalog.network.baseUrl")
     ?: providers.environmentVariable("KALOG_NETWORK_BASE_URL").orNull
     ?: ""
-val networkDnsFallbackHosts = localNetworkProperty("kalog.network.dnsFallbackHosts")
-    ?: providers.environmentVariable("KALOG_NETWORK_DNS_FALLBACK_HOSTS").orNull
-    ?: ""
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -77,6 +74,5 @@ buildkonfig {
 
     defaultConfigs {
         buildConfigField(STRING, "NETWORK_BASE_URL", networkBaseUrl)
-        buildConfigField(STRING, "NETWORK_DNS_FALLBACK_HOSTS", networkDnsFallbackHosts)
     }
 }
