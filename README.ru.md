@@ -41,8 +41,8 @@ Mayday Chat - мультиплатформенный защищенный чат
 
 ## Демо-видео
 
-- [Onboarding, app lock, личные чаты, групповые чаты и вложения](https://github.com/nAglTI/KALog-public/releases/latest/download/full-onboarding-and-chats-demo.mp4)
-- [Защищенный паролем backup аккаунта и импорт с Android на Windows](https://github.com/nAglTI/KALog-public/releases/latest/download/account-backup-android-to-windows-demo.mp4)
+- [Onboarding, app lock, личные чаты, групповые чаты и вложения](https://github.com/nAglTI/mayday-chat/releases/download/v1.0.0-alpha/full-onboarding-and-chats-demo.mp4)
+- [Защищенный паролем backup аккаунта и импорт с Android на Windows](https://github.com/nAglTI/mayday-chat/releases/download/v1.0.0-alpha/account-backup-android-to-windows-demo.mp4)
 
 ## Возможности
 

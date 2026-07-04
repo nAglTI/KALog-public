@@ -41,8 +41,8 @@ Mayday Chat is a Kotlin Multiplatform secure messaging client for Android, iOS, 
 
 ## Demo Videos
 
-- [Onboarding, app lock, personal chats, group chats, and attachments](https://github.com/nAglTI/KALog-public/releases/latest/download/full-onboarding-and-chats-demo.mp4)
-- [Password-protected account backup and Android to Windows import](https://github.com/nAglTI/KALog-public/releases/latest/download/account-backup-android-to-windows-demo.mp4)
+- [Onboarding, app lock, personal chats, group chats, and attachments](https://github.com/nAglTI/mayday-chat/releases/download/v1.0.0-alpha/full-onboarding-and-chats-demo.mp4)
+- [Password-protected account backup and Android to Windows import](https://github.com/nAglTI/mayday-chat/releases/download/v1.0.0-alpha/account-backup-android-to-windows-demo.mp4)
 
 ## What It Can Do
 
