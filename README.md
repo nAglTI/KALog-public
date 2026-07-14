@@ -22,10 +22,6 @@ Mayday Chat is a Kotlin Multiplatform secure messaging client for Android, iOS, 
       <img src="docs/images/readme/group-chat.jpg" alt="Group chat" width="1050" /><br />
       <sub>Group chat with participants, invitation flow, and editable title.</sub>
     </td>
-    <td>
-      <img src="docs/images/readme/attachments.jpg" alt="Attachments in chat" width="1050" /><br />
-      <sub>Image and file attachments inside a regular chat flow.</sub>
-    </td>
   </tr>
   <tr>
     <td>
